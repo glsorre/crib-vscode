@@ -1,0 +1,293 @@
+{
+  "name": "crib-vscode-main",
+  "displayName": "Crib Extension",
+  "description": "Open any crib devcontainer with a single click.",
+  "version": "0.1.3",
+  "publisher": "rightright-me",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/glsorre/crib-vscode.git"
+  },
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/.devcontainer/devcontainer.json",
+    "workspaceContains:**/.devcontainer.json",
+    "onStartupFinished",
+    "onView:cribWorkspaces",
+    "onCommand:crib.up",
+    "onCommand:crib.down",
+    "onCommand:crib.restart",
+    "onCommand:crib.rebuild",
+    "onCommand:crib.remove",
+    "onCommand:crib.attach",
+    "onCommand:crib.syncNow",
+    "onCommand:crib.openConfig",
+    "onCommand:crib.refresh",
+    "onCommand:crib.focusOutput"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "crib.up",
+        "title": "Up",
+        "category": "Crib",
+        "icon": "$(play)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.down",
+        "title": "Down",
+        "category": "Crib",
+        "icon": "$(stop)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.restart",
+        "title": "Restart",
+        "category": "Crib",
+        "icon": "$(refresh)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.rebuild",
+        "title": "Rebuild",
+        "category": "Crib",
+        "icon": "$(tools)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.remove",
+        "title": "Remove",
+        "category": "Crib",
+        "icon": "$(trash)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.attach",
+        "title": "Attach to Container…",
+        "category": "Crib",
+        "icon": "$(plug)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.syncNow",
+        "title": "Sync nameConfigs from devcontainer.json",
+        "category": "Crib",
+        "icon": "$(sync)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.openConfig",
+        "title": "Open Generated nameConfig",
+        "category": "Crib",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.refresh",
+        "title": "Refresh Workspaces",
+        "category": "Crib",
+        "icon": "$(refresh)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.focusOutput",
+        "title": "Show Crib Output Log",
+        "category": "Crib",
+        "icon": "$(output)"
+      }
+    ],
+    "configuration": {
+      "title": "Crib",
+      "properties": {
+        "crib.path": {
+          "type": "string",
+          "default": "crib",
+          "description": "Path to the crib executable. Defaults to looking it up on PATH."
+        },
+        "crib.autoUpOnAttach": {
+          "type": "boolean",
+          "default": true,
+          "description": "When attaching, automatically run `crib up` if the workspace's container is not running."
+        },
+        "crib.extraExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra VS Code extension IDs to install on every attached crib container, in addition to those declared in devcontainer.json."
+        },
+        "crib.includeFeatureExtensions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Merge customizations.vscode.extensions contributed by devcontainer features (read from the built image's devcontainer.metadata label, with a best-effort OCI manifest fetch as fallback)."
+        },
+        "crib.featureManifestFetch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow fetching feature manifests from OCI registries when the image is not yet built. Disable for fully offline environments."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cribViewContainer",
+          "title": "Crib",
+          "icon": "media/crib.svg"
+        }
+      ]
+    },
+    "views": {
+      "cribViewContainer": [
+        {
+          "id": "cribWorkspaces",
+          "name": "Workspaces"
+        }
+      ]
+    },
+    "menus": {
+      "statusBar/remoteIndicator": [
+        {
+          "command": "crib.attach",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'ssh-remote'",
+          "group": "remote_20_ssh-remote_1-crib-attach@1"
+        },
+        {
+          "command": "crib.up",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'ssh-remote'",
+          "group": "remote_20_ssh-remote_2-crib-lifecycle@1"
+        },
+        {
+          "command": "crib.attach",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'wsl'",
+          "group": "remote_10_wsl_1-crib-attach@1"
+        },
+        {
+          "command": "crib.up",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'wsl'",
+          "group": "remote_10_wsl_2-crib-lifecycle@1"
+        },
+        {
+          "command": "crib.attach",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'dev-container'",
+          "group": "remote_30_dev-container_1-crib-attach@1"
+        },
+        {
+          "command": "crib.up",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'dev-container'",
+          "group": "remote_30_dev-container_2-crib-lifecycle@1"
+        },
+        {
+          "command": "crib.attach",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'attached-container'",
+          "group": "remote_31_attached-container_1-crib-attach@1"
+        },
+        {
+          "command": "crib.up",
+          "when": "crib.runsOnWorkspaceHost && workspaceFolderCount > 0 && remoteName == 'attached-container'",
+          "group": "remote_31_attached-container_2-crib-lifecycle@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "crib.refresh",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces",
+          "group": "navigation@1"
+        },
+        {
+          "command": "crib.syncNow",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && crib.hasDevcontainerTargets",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "crib.up",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.down || viewItem == workspace.runtime.down)",
+          "group": "inline@1"
+        },
+        {
+          "command": "crib.attach",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && viewItem == workspace.up",
+          "group": "inline@1"
+        },
+        {
+          "command": "crib.down",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.up || viewItem == workspace.runtime.up)",
+          "group": "inline@2"
+        },
+        {
+          "command": "crib.up",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.down || viewItem == workspace.runtime.down)",
+          "group": "1_lifecycle@1"
+        },
+        {
+          "command": "crib.attach",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && viewItem == workspace.up",
+          "group": "1_lifecycle@1"
+        },
+        {
+          "command": "crib.down",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.up || viewItem == workspace.runtime.up)",
+          "group": "1_lifecycle@2"
+        },
+        {
+          "command": "crib.restart",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.up || viewItem == workspace.runtime.up)",
+          "group": "2_lifecycle@1"
+        },
+        {
+          "command": "crib.rebuild",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.up || viewItem == workspace.down || viewItem == workspace.runtime.up || viewItem == workspace.runtime.down)",
+          "group": "2_lifecycle@2"
+        },
+        {
+          "command": "crib.syncNow",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && crib.hasDevcontainerTargets && (viewItem == workspace.up || viewItem == workspace.down)",
+          "group": "3_sync@1"
+        },
+        {
+          "command": "crib.openConfig",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.up || viewItem == workspace.down)",
+          "group": "3_sync@2"
+        },
+        {
+          "command": "crib.remove",
+          "when": "crib.runsOnWorkspaceHost && view == cribWorkspaces && (viewItem == workspace.up || viewItem == workspace.down || viewItem == workspace.runtime.up || viewItem == workspace.runtime.down)",
+          "group": "9_destructive@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.105.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.56.1",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
