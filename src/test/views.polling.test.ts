@@ -13,6 +13,7 @@ const storage: DevContainerStorage = {
 	extensionFound: true,
 	globalStorage: storageRoot,
 	nameConfigs: vscode.Uri.joinPath(storageRoot, 'nameConfigs'),
+	imageConfigs: vscode.Uri.joinPath(storageRoot, 'imageConfigs'),
 };
 
 function makeMockCrib(initialState: CribState = 'up'): CribCli {

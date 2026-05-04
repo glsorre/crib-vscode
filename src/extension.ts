@@ -40,6 +40,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			void vscode.commands.executeCommand('setContext', 'crib.runsOnWorkspaceHost', false);
 		},
 	});
+	// Workspace trust: gate lifecycle commands to trusted workspaces only.
+	void vscode.commands.executeCommand('setContext', 'crib.trusted', vscode.workspace.isTrusted);
+	const trustDisposable = vscode.workspace.onDidGrantWorkspaceTrust(() => {
+		void vscode.commands.executeCommand('setContext', 'crib.trusted', true);
+	});
+	context.subscriptions.push(trustDisposable);
 	output.appendLine(
 		'[crib] If this channel is missing from the Output dropdown, run command **Crib: Show Crib Output Log** from the Command Palette (it activates the extension).',
 	);
@@ -245,11 +251,31 @@ function registerCommands(context: vscode.ExtensionContext, deps: CommandDeps): 
 	registerSyncCommands(reg, deps);
 }
 
+/** Guard: show trust message and return true if workspace is untrusted. */
+function checkWorkspaceTrust(output: vscode.OutputChannel): boolean {
+	if (vscode.workspace.isTrusted) {
+		return false;
+	}
+	vscode.window.showWarningMessage(
+		'Crib: Workspace is not trusted. Run `Trust Workspace` from the Command Palette to enable lifecycle commands.',
+		'Open Trust Settings',
+	).then(choice => {
+		if (choice === 'Open Trust Settings') {
+			void vscode.commands.executeCommand('workbench.action.openWorkspaceTrustSettings');
+		}
+	}, () => {});
+	output.appendLine('[crib] workspace not trusted; lifecycle command blocked');
+	return true;
+}
+
 function registerLifecycleCommands(
 	reg: (cmd: string, handler: (...args: unknown[]) => unknown) => void,
 	deps: CommandDeps,
 ): void {
 	reg('crib.up', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('up', target, deps, () => deps.crib.up(target.workspaceFolderUri));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
@@ -264,11 +290,17 @@ function registerLifecycleCommands(
 	}));
 
 	reg('crib.down', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('down', target, deps, () => deps.crib.down(target.workspaceFolderUri));
 		deps.tree.refresh();
 	}));
 
 	reg('crib.restart', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('restart', target, deps, () => deps.crib.restart(target.workspaceFolderUri));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
@@ -283,6 +315,9 @@ function registerLifecycleCommands(
 	}));
 
 	reg('crib.rebuild', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('rebuild', target, deps, () => deps.crib.rebuild(target.workspaceFolderUri));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
@@ -297,6 +332,9 @@ function registerLifecycleCommands(
 	}));
 
 	reg('crib.remove', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		const confirm = await vscode.window.showWarningMessage(
 			`Remove crib container "${target.containerName}"? The matching nameConfig will also be deleted.`,
 			{ modal: true },
@@ -539,6 +577,22 @@ function registerSyncCommands(
 				`No nameConfig has been written yet for ${target.containerName}.`,
 			);
 		}
+	}));
+
+	reg('crib.openDevcontainerJson', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (!target.devcontainerOnDisk) {
+			vscode.window.showInformationMessage(
+				`No devcontainer.json on disk for workspace "${target.containerName}".`,
+				'Open Folder',
+			).then(choice => {
+				if (choice === 'Open Folder') {
+					void vscode.commands.executeCommand('vscode.openFolder', target.workspaceFolderUri, false);
+				}
+			}, () => {});
+			return;
+		}
+		const doc = await vscode.workspace.openTextDocument(target.devcontainerUri);
+		await vscode.window.showTextDocument(doc);
 	}));
 
 	reg('crib.refresh', () => {

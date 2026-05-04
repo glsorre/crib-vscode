@@ -7,8 +7,8 @@ import {
 	workspaceRootFor,
 } from './devcontainer';
 import { FeatureCustomizations, FeatureResolver } from './features';
-import { buildNameConfig, NameConfig, writeNameConfig } from './nameConfig';
-import { DevContainerStorage, displayPath, nameConfigUri } from './paths';
+import { buildNameConfig, NameConfig, writeImageConfig, writeNameConfig } from './nameConfig';
+import { DevContainerStorage, displayPath, imageConfigUri as makeImageConfigUri, nameConfigUri } from './paths';
 import { resolveContainerName } from './containerName';
 
 export interface SyncOptions {
@@ -37,6 +37,9 @@ export interface SyncResult {
 	readonly nameConfigUri: vscode.Uri;
 	readonly written: boolean;
 	readonly extensionsCount: number;
+	/** Set when devcontainer.json declares an "image" field; undefined otherwise. */
+	readonly imageConfigUri?: vscode.Uri;
+	readonly imageConfigWritten?: boolean;
 }
 
 export class SyncError extends Error {
@@ -84,18 +87,34 @@ export class SyncEngine {
 		const target = nameConfigUri(this.storage, containerName);
 		const source = opts.source ?? displayPath(devcontainerUri);
 		const { written } = await writeNameConfig(target, nameConfig, source);
-
 		const extCount = nameConfig.extensions?.length ?? 0;
-		this.output.appendLine(
-			`[sync] ${containerName}: ${extCount} extension(s) ${written ? 'written' : 'unchanged'} ` +
-				`-> ${displayPath(target)}`,
-		);
+
+		// Also write an imageConfig if the devcontainer.json declares an "image" field.
+		let imageConfigWritten = false;
+		const imgConfigUri = parsed.config.image ? makeImageConfigUri(this.storage, parsed.config.image) : undefined;
+		if (imgConfigUri) {
+			const { written: imgWritten } = await writeImageConfig(imgConfigUri, nameConfig, source);
+			imageConfigWritten = imgWritten;
+			this.output.appendLine(
+				`[sync] image ${parsed.config.image}: ${extCount} extension(s) ${imgWritten ? 'written' : 'unchanged'} ` +
+					`-> ${displayPath(imgConfigUri)}`,
+			);
+		}
+
+		const msg = imgConfigUri
+			? `[sync] ${containerName}: ${extCount} ext(s) ${written ? 'written' : 'unchanged'} -> ${displayPath(target)}; ` +
+				`image ${parsed.config.image}: ${imageConfigWritten ? 'written' : 'unchanged'} -> ${displayPath(imgConfigUri)}`
+			: `[sync] ${containerName}: ${extCount} extension(s) ${written ? 'written' : 'unchanged'} ` +
+					`-> ${displayPath(target)}`;
+		this.output.appendLine(msg);
 		const result: SyncResult = {
 			devcontainerUri,
 			containerName,
 			nameConfigUri: target,
 			written,
 			extensionsCount: extCount,
+			imageConfigUri: imgConfigUri,
+			imageConfigWritten,
 		};
 		this._onDidSync.fire(result);
 		return result;

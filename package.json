@@ -26,6 +26,7 @@
     "onCommand:crib.down",
     "onCommand:crib.focusOutput",
     "onCommand:crib.openConfig",
+    "onCommand:crib.openDevcontainerJson",
     "onCommand:crib.rebuild",
     "onCommand:crib.refresh",
     "onCommand:crib.remove",
@@ -41,35 +42,35 @@
         "title": "Up",
         "category": "Crib",
         "icon": "$(play)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.down",
         "title": "Down",
         "category": "Crib",
         "icon": "$(stop)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.restart",
         "title": "Restart",
         "category": "Crib",
         "icon": "$(refresh)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.rebuild",
         "title": "Rebuild",
         "category": "Crib",
         "icon": "$(tools)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.remove",
         "title": "Remove",
         "category": "Crib",
         "icon": "$(trash)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.attach",
@@ -96,6 +97,13 @@
         "title": "Refresh Workspaces",
         "category": "Crib",
         "icon": "$(refresh)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.openDevcontainerJson",
+        "title": "Open devcontainer.json",
+        "category": "Crib",
+        "icon": "$(json)",
         "enablement": "crib.runsOnWorkspaceHost"
       },
       {

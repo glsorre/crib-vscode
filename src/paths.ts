@@ -12,6 +12,7 @@ export interface DevContainerStorage {
 	readonly fallbackReason?: string;
 	readonly globalStorage: vscode.Uri;
 	readonly nameConfigs: vscode.Uri;
+	readonly imageConfigs: vscode.Uri;
 }
 
 /**
@@ -33,6 +34,7 @@ export function getDevContainerStorage(context: vscode.ExtensionContext): DevCon
 		fallbackReason: resolved.fallbackReason,
 		globalStorage,
 		nameConfigs: vscode.Uri.joinPath(globalStorage, 'nameConfigs'),
+		imageConfigs: vscode.Uri.joinPath(globalStorage, 'imageConfigs'),
 	};
 }
 
@@ -83,6 +85,15 @@ function isCursorApp(appName: string): boolean {
  */
 export function nameConfigUri(storage: DevContainerStorage, containerName: string): vscode.Uri {
 	return vscode.Uri.joinPath(storage.nameConfigs, `${containerName}.json`);
+}
+
+/**
+ * Build an imageConfig URI for a given image name. The Dev Containers
+ * extension reads `imageConfigs/<image>.json`, where the image name
+ * is the key (e.g. "my-image:latest").
+ */
+export function imageConfigUri(storage: DevContainerStorage, imageName: string): vscode.Uri {
+	return vscode.Uri.joinPath(storage.imageConfigs, `${imageName}.json`);
 }
 
 /**
