@@ -143,6 +143,7 @@ function activateBody(
 	});
 	context.subscriptions.push(treeView);
 	void vscode.commands.executeCommand('setContext', 'crib.hasDevcontainerTargets', false);
+	tree.startPolling();
 
 	registerCommands(context, { engine, crib, tree, output, storage });
 

@@ -32,13 +32,17 @@ export class CribTreeDataProvider implements vscode.TreeDataProvider<WorkspaceIt
 	private discoverySeeded = false;
 	private readonly subscriptions: vscode.Disposable[] = [];
 	private disposed = false;
+	private _pollTimer: NodeJS.Timeout | undefined;
+	private readonly _pollIntervalMs: number;
 
 	constructor(
 		private readonly storage: DevContainerStorage,
 		private readonly crib: CribCli | undefined,
 		private readonly engine: SyncEngine,
 		private readonly appendLog: (message: string) => void = () => {},
+		pollIntervalMs = 30_000,
 	) {
+		this._pollIntervalMs = pollIntervalMs;
 		this.subscriptions.push(
 			engine.onDidSync(result => {
 				if (this.disposed) {
@@ -56,6 +60,10 @@ export class CribTreeDataProvider implements vscode.TreeDataProvider<WorkspaceIt
 
 	dispose(): void {
 		this.disposed = true;
+		if (this._pollTimer) {
+			clearInterval(this._pollTimer);
+			this._pollTimer = undefined;
+		}
 		for (const d of this.subscriptions) {
 			d.dispose();
 		}
@@ -67,6 +75,32 @@ export class CribTreeDataProvider implements vscode.TreeDataProvider<WorkspaceIt
 	refresh(): void {
 		this.discoverySeeded = false;
 		void this.rebuildQueue.run(() => this.rebuildCore());
+	}
+
+	startPolling(): void {
+		if (this._pollTimer !== undefined) {
+			return;
+		}
+		if (this.disposed) {
+			return;
+		}
+		if (!this.crib) {
+			return;
+		}
+		this._pollTimer = setInterval(async () => {
+			if (this.disposed) {
+				return;
+			}
+			await this.refreshStates();
+		}, this._pollIntervalMs);
+		this.subscriptions.push({
+			dispose: () => {
+				if (this._pollTimer) {
+					clearInterval(this._pollTimer);
+					this._pollTimer = undefined;
+				}
+			},
+		});
 	}
 
 	getTreeItem(element: WorkspaceItem): vscode.TreeItem {
@@ -159,6 +193,31 @@ export class CribTreeDataProvider implements vscode.TreeDataProvider<WorkspaceIt
 			return status.state;
 		} catch {
 			return 'unknown';
+		}
+	}
+
+	/**
+	 * Incrementally refresh state for all cached workspaces. Fires
+	 * _onDidChangeTreeData only if at least one state changed, to avoid
+	 * unnecessary UI churn during poll cycles.
+	 */
+	private async refreshStates(): Promise<void> {
+		if (this.cache.length === 0) {
+			return;
+		}
+		let changed = false;
+		await Promise.all(
+			this.cache.map(async item => {
+				const next = await this.probeState(item.workspaceFolderUri);
+				if (item.state !== next) {
+					item.state = next;
+					changed = true;
+				}
+			}),
+		);
+		if (changed) {
+			this.appendLog(`[poll] state changed; refreshing tree`);
+			this._onDidChangeTreeData.fire(undefined);
 		}
 	}
 }
