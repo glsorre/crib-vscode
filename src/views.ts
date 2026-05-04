@@ -205,17 +205,15 @@ export class CribTreeDataProvider implements vscode.TreeDataProvider<WorkspaceIt
 		if (this.cache.length === 0) {
 			return;
 		}
-		let changed = false;
-		await Promise.all(
-			this.cache.map(async item => {
-				const next = await this.probeState(item.workspaceFolderUri);
-				if (item.state !== next) {
-					item.state = next;
-					changed = true;
-				}
-			}),
-		);
-		if (changed) {
+		let anyChanged = false;
+		for (const item of this.cache) {
+			const next = await this.probeState(item.workspaceFolderUri);
+			if (item.state !== next) {
+				item.state = next;
+				anyChanged = true;
+			}
+		}
+		if (anyChanged) {
 			this.appendLog(`[poll] state changed; refreshing tree`);
 			this._onDidChangeTreeData.fire(undefined);
 		}
