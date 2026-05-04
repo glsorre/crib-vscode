@@ -18,20 +18,20 @@
     "workspace"
   ],
   "activationEvents": [
-    "workspaceContains:**/.devcontainer/devcontainer.json",
     "workspaceContains:**/.devcontainer.json",
+    "workspaceContains:**/.devcontainer/devcontainer.json",
     "onStartupFinished",
     "onView:cribWorkspaces",
-    "onCommand:crib.up",
-    "onCommand:crib.down",
-    "onCommand:crib.restart",
-    "onCommand:crib.rebuild",
-    "onCommand:crib.remove",
     "onCommand:crib.attach",
-    "onCommand:crib.syncNow",
+    "onCommand:crib.down",
+    "onCommand:crib.focusOutput",
     "onCommand:crib.openConfig",
+    "onCommand:crib.rebuild",
     "onCommand:crib.refresh",
-    "onCommand:crib.focusOutput"
+    "onCommand:crib.remove",
+    "onCommand:crib.restart",
+    "onCommand:crib.syncNow",
+    "onCommand:crib.up"
   ],
   "main": "./out/extension.js",
   "contributes": {

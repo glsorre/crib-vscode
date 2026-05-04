@@ -30,7 +30,6 @@ suite('SyncEngine', () => {
 			extensionFound: true,
 			globalStorage: storageRoot,
 			nameConfigs: vscode.Uri.joinPath(storageRoot, 'nameConfigs'),
-			imageConfigs: vscode.Uri.joinPath(storageRoot, 'imageConfigs'),
 		};
 		const output = vscode.window.createOutputChannel('Crib Sync Test');
 		const features = new FeatureResolver(

@@ -13,7 +13,6 @@ const storage: DevContainerStorage = {
 	extensionFound: true,
 	globalStorage: storageRoot,
 	nameConfigs: vscode.Uri.joinPath(storageRoot, 'nameConfigs'),
-	imageConfigs: vscode.Uri.joinPath(storageRoot, 'imageConfigs'),
 };
 
 function makeMockCrib(initialState: CribState = 'up'): CribCli {
@@ -72,6 +71,8 @@ suite('CribTreeDataProvider polling', () => {
 		const crib = makeMockCrib();
 		const engine = makeMockEngine();
 		const tree = new CribTreeDataProvider(storage, crib, engine, NOOP_LOG);
+		// Cache starts empty; refreshStates should handle missing rows gracefully.
+		await (tree as unknown as { refreshStates(): Promise<void> }).refreshStates();
 		tree.dispose();
 	});
 

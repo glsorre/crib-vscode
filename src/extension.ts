@@ -1,3 +1,4 @@
+import { describe } from './util';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
@@ -545,12 +546,12 @@ function registerSyncCommands(
 	});
 }
 
-type ResolvedTarget = DiscoveredTarget;
+
 
 async function withWorkspace(
 	item: unknown,
 	deps: CommandDeps,
-	fn: (target: ResolvedTarget) => Promise<void>,
+	fn: (target: DiscoveredTarget) => Promise<void>,
 ): Promise<void> {
 	try {
 		const target = await pickWorkspace(item, deps, false);
@@ -566,7 +567,7 @@ async function withWorkspace(
 async function withOptionalWorkspace(
 	item: unknown,
 	deps: CommandDeps,
-	fn: (targets: ResolvedTarget[]) => Promise<void>,
+	fn: (targets: DiscoveredTarget[]) => Promise<void>,
 ): Promise<void> {
 	try {
 		const target = await pickWorkspace(item, deps, true);
@@ -574,7 +575,7 @@ async function withOptionalWorkspace(
 			await fn([target]);
 			return;
 		}
-		const all = await collectAll(deps);
+		const all = await collectAllDiscoverableTargets(deps.crib, msg => deps.output.appendLine(msg));
 		await fn(all);
 	} catch (err) {
 		reportError(err, deps);
@@ -585,7 +586,7 @@ async function pickWorkspace(
 	item: unknown,
 	deps: CommandDeps,
 	allowSyncAll: boolean,
-): Promise<ResolvedTarget | undefined> {
+): Promise<DiscoveredTarget | undefined> {
 	if (item instanceof WorkspaceItem) {
 		return {
 			devcontainerUri: item.data.devcontainerUri,
@@ -594,7 +595,7 @@ async function pickWorkspace(
 			devcontainerOnDisk: item.data.devcontainerOnDisk,
 		};
 	}
-	const all = await collectAll(deps);
+	const all = await collectAllDiscoverableTargets(deps.crib, msg => deps.output.appendLine(msg));
 	if (all.length === 0) {
 		if (!allowSyncAll) {
 			vscode.window.showInformationMessage(
@@ -618,11 +619,7 @@ async function pickWorkspace(
 	return picked?.target;
 }
 
-async function collectAll(deps: CommandDeps): Promise<ResolvedTarget[]> {
-	return collectAllDiscoverableTargets(deps.crib, msg => deps.output.appendLine(msg));
-}
-
-async function ensureUp(target: ResolvedTarget, deps: CommandDeps): Promise<void> {
+async function ensureUp(target: DiscoveredTarget, deps: CommandDeps): Promise<void> {
 	if (!settings().autoUpOnAttach) {
 		return;
 	}
@@ -640,7 +637,7 @@ async function ensureUp(target: ResolvedTarget, deps: CommandDeps): Promise<void
 
 async function runCribLifecycle(
 	verb: string,
-	target: ResolvedTarget,
+	target: DiscoveredTarget,
 	deps: CommandDeps,
 	action: () => Promise<void>,
 ): Promise<void> {
@@ -674,10 +671,6 @@ function reportError(err: unknown, deps: CommandDeps): void {
 		return;
 	}
 	void vscode.window.showErrorMessage(`Crib: ${msg}`);
-}
-
-function describe(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
 }
 
 function settings(): SyncSettings & {

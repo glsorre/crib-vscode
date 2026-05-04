@@ -38,7 +38,7 @@ export class CribTreeDataProvider implements vscode.TreeDataProvider<WorkspaceIt
 	constructor(
 		private readonly storage: DevContainerStorage,
 		private readonly crib: CribCli | undefined,
-		private readonly engine: SyncEngine,
+		engine: SyncEngine,
 		private readonly appendLog: (message: string) => void = () => {},
 		pollIntervalMs = 30_000,
 	) {

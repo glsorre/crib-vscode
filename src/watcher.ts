@@ -1,3 +1,4 @@
+import { describe } from './util';
 import * as vscode from 'vscode';
 import { DEVCONTAINER_GLOBS, workspaceRootFor } from './devcontainer';
 import { deleteNameConfig } from './nameConfig';
@@ -118,8 +119,4 @@ export async function bootstrapScan(deps: WatcherDeps): Promise<vscode.Uri[]> {
 		}
 	}
 	return found;
-}
-
-function describe(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
 }

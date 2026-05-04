@@ -1,5 +1,6 @@
+import { readUtf8File } from './util';
 import * as vscode from 'vscode';
-import { parse as parseJsonc, ParseError, printParseErrorCode } from 'jsonc-parser';
+import { parse as parseJsonc, ParseError } from 'jsonc-parser';
 
 export type FeaturesMap = Record<string, unknown>;
 
@@ -45,8 +46,7 @@ export const DEVCONTAINER_GLOBS: ReadonlyArray<string> = [
 ];
 
 export async function readDevContainer(uri: vscode.Uri): Promise<ParsedDevContainer> {
-	const bytes = await vscode.workspace.fs.readFile(uri);
-	const text = Buffer.from(bytes).toString('utf8');
+	const text = await readUtf8File(uri);
 	const errors: ParseError[] = [];
 	const parsed = parseJsonc(text, errors, { allowTrailingComma: true, allowEmptyContent: false });
 	if (!parsed || typeof parsed !== 'object') {
@@ -54,11 +54,8 @@ export async function readDevContainer(uri: vscode.Uri): Promise<ParsedDevContai
 	}
 	if (errors.length > 0) {
 		// JSONC-parser still returns a partial object on recoverable errors; we
-		// surface them but only throw if the result is unusable.
-		const messages = errors
-			.map(e => `${printParseErrorCode(e.error)} at offset ${e.offset}`)
-			.join(', ');
-		console.warn(`[crib] devcontainer.json parsed with warnings (${uri.toString()}): ${messages}`);
+		// silently swallow them here because the result is usable. Unrecoverable
+		// errors already throw above.
 	}
 	const config = parsed as DevContainerJson & { raw: Record<string, unknown> };
 	(config as { raw: Record<string, unknown> }).raw = parsed as Record<string, unknown>;

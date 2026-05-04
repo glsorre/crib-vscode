@@ -1,3 +1,4 @@
+import { readUtf8File } from './util';
 import * as vscode from 'vscode';
 import { DevContainerJson, vscodeCustomizations } from './devcontainer';
 import { FeatureCustomizations } from './features';
@@ -145,8 +146,8 @@ export async function deleteNameConfig(target: vscode.Uri): Promise<boolean> {
 
 async function readJsonIfExists(uri: vscode.Uri): Promise<Record<string, unknown> | undefined> {
 	try {
-		const bytes = await vscode.workspace.fs.readFile(uri);
-		const parsed = JSON.parse(Buffer.from(bytes).toString('utf8'));
+		const raw = await readUtf8File(uri);
+		const parsed = JSON.parse(raw);
 		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
 			return parsed as Record<string, unknown>;
 		}

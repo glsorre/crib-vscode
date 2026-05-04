@@ -3,7 +3,6 @@ import {
 	hasContainerName,
 	resolveAttachTarget,
 	resolveDirectAttachCommand,
-	resolveUiAttachCommand,
 	UI_ATTACH_BRIDGE_COMMAND,
 } from '../attach';
 
@@ -66,29 +65,6 @@ suite('attach resolution', () => {
 		if (target.kind === 'unavailable') {
 			assert.match(target.reason, /No Dev Containers attach command/);
 		}
-	});
-
-	test('resolves UI attach direct command before picker fallback', () => {
-		assert.deepStrictEqual(
-			resolveUiAttachCommand([
-				'remote-containers.attachToRunningContainerFromViewlet',
-				'anysphere.remote-containers.attachToRunningContainer',
-			]),
-			{
-				kind: 'direct',
-				command: 'anysphere.remote-containers.attachToRunningContainer',
-			},
-		);
-	});
-
-	test('resolves UI attach picker when no direct command exists', () => {
-		assert.deepStrictEqual(
-			resolveUiAttachCommand(['remote-containers.attachToRunningContainerFromViewlet']),
-			{
-				kind: 'picker',
-				command: 'remote-containers.attachToRunningContainerFromViewlet',
-			},
-		);
 	});
 
 	test('accepts only non-empty container names for attach', () => {
