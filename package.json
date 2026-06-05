@@ -143,6 +143,11 @@
           "type": "boolean",
           "default": true,
           "description": "Allow fetching feature manifests from OCI registries when the image is not yet built. Disable for fully offline environments."
+        },
+        "crib.forwardSshAgent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Forward SSH_AUTH_SOCK to the `crib` subprocess so its `ssh` plugin can bind-mount the agent socket into the container. When the editor-created agent socket is unreadable (e.g. Cursor remote-SSH on some hosts), `crib up`/`rebuild` fails with `invalid mount config ... permission denied`; set this to false to strip SSH_AUTH_SOCK from the spawn environment. When true (default), the extension still auto-strips when the socket is provably unreadable."
         }
       }
     },

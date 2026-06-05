@@ -113,7 +113,7 @@ export async function bootstrapScan(deps: WatcherDeps): Promise<vscode.Uri[]> {
 				await deps.engine.sync(uri, { source: 'bootstrap' });
 			} catch (err) {
 				deps.output.appendLine(
-					`[bootstrap] sync failed for ${displayPath(uri)}: ${describe(err)}`,
+					`[watcher.bootstrap] sync failed for ${displayPath(uri)}: ${describe(err)}`,
 				);
 			}
 		}

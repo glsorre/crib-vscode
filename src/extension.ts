@@ -8,7 +8,7 @@ import {
 } from './attach';
 import { installAttachExtensionsFallback } from './attachExtensionFallback';
 import { devContainersAttachArgument } from './attachPayload';
-import { CribCli, CribNotFoundError } from './crib';
+import { CribCli, CribExitError, CribNotFoundError, isSshAgentMountError } from './crib';
 import { collectAllDiscoverableTargets, DiscoveredTarget } from './targetDiscovery';
 import { FeatureResolver } from './features';
 import { deleteNameConfig } from './nameConfig';
@@ -25,6 +25,29 @@ import { installWatchers } from './watcher';
 
 const CONFIG_SECTION = 'crib';
 
+/**
+ * Canonical OutputChannel tag taxonomy. Every appendLine SHOULD start with one
+ * of these bracketed tags; domain tags are preferred over severity tags.
+ *
+ * Domain tags:
+ *   [crib]                activation, version probe, host gating, generic CLI lifecycle
+ *   [crib.up|down|restart|rebuild|remove]
+ *                         per-lifecycle subcommand telemetry
+ *   [attach]              attach pipeline (target/Docker id resolution, dispatch)
+ *   [attach.extensions]   remote attach extension-install fallback
+ *   [features]            feature manifest resolver
+ *   [discover]            workspace discovery + tree rebuild
+ *   [poll]                tree-state polling tick
+ *   [watcher]             file-system watcher install + events
+ *   [watcher.bootstrap]   bootstrap scan of pre-existing devcontainer.json
+ *   [container]           container-name resolution from crib status
+ *   [sync]                SyncEngine nameConfig/imageConfig writes
+ *   [docker]              direct `docker` CLI subprocess (not via crib)
+ *   [debug]               one-shot extension-host log-path echo
+ *
+ * Severity-only tags (use when no domain fits):
+ *   [info] [warn] [error] [hint]
+ */
 export function activate(context: vscode.ExtensionContext): void {
 	const output = vscode.window.createOutputChannel('Crib');
 	context.subscriptions.push(output);
@@ -74,7 +97,7 @@ function activateBody(
 
 	const storage = getDevContainerStorage(context);
 	output.appendLine(
-		`crib-vscode activating; Dev Containers storage = ${storage.extensionId}, ` +
+		`[crib] crib-vscode activating; Dev Containers storage = ${storage.extensionId}, ` +
 			`globalStorage = ${displayPath(storage.globalStorage)}`,
 	);
 	const hostKind =
@@ -84,7 +107,7 @@ function activateBody(
 				? 'Workspace'
 				: String(context.extension.extensionKind);
 	output.appendLine(
-		`crib-vscode host: extensionKind=${hostKind} (${context.extension.extensionKind}), ` +
+		`[crib] crib-vscode host: extensionKind=${hostKind} (${context.extension.extensionKind}), ` +
 			`remoteName=${vscode.env.remoteName ?? 'local'}`,
 	);
 	if (context.extension.extensionKind === vscode.ExtensionKind.UI) {
@@ -94,7 +117,7 @@ function activateBody(
 		);
 	} else {
 		output.appendLine(
-			'crib-vscode workspace extension host active; sync/up/down/rebuild commands are registered here.',
+			'[crib] crib-vscode workspace extension host active; sync/up/down/rebuild commands are registered here.',
 		);
 	}
 	if (!storage.extensionFound) {
@@ -111,11 +134,11 @@ function activateBody(
 			'[crib] Workspaces tree, `crib` CLI, and Crib commands are not activated on this host (UI extension host). Use **Crib: Show Crib Output Log** here; run Crib from the SSH workspace window.',
 		);
 		registerUiHostCommandStubs(context);
-		output.appendLine('crib-vscode ready');
+		output.appendLine('[crib] crib-vscode ready');
 		return;
 	}
 
-	const crib = new CribCli(output, () => settings().path);
+	const crib = new CribCli(output, () => settings().path, () => settings().forwardSshAgent);
 	output.appendLine(`[crib] crib.path → ${JSON.stringify(crib.binary)} (Remote-SSH: must be on PATH in this host or set in settings)`);
 	void crib.version().then(
 		version => {
@@ -172,7 +195,7 @@ function activateBody(
 		}
 	})();
 
-	output.appendLine('crib-vscode ready');
+	output.appendLine('[crib] crib-vscode ready');
 }
 
 
@@ -703,9 +726,62 @@ async function runCribLifecycle(
 			cancellable: false,
 		},
 		async () => {
-			await action();
+			try {
+				await action();
+			} catch (err) {
+				if (err instanceof CribExitError && isSshAgentMountError(err.stderrTail)) {
+					const retry = await offerDisableSshAgentForwarding(verb, err, deps);
+					if (retry) {
+						await action();
+						return;
+					}
+				}
+				throw err;
+			}
 		},
 	);
+}
+
+/**
+ * Triggered when crib's hardcoded ssh plugin fails to bind-mount $SSH_AUTH_SOCK
+ * (Docker daemon cannot stat the editor-created agent socket). Offers a one-click
+ * workspace-scoped disable + immediate retry of the same lifecycle action.
+ */
+async function offerDisableSshAgentForwarding(
+	verb: string,
+	err: CribExitError,
+	deps: CommandDeps,
+): Promise<boolean> {
+	deps.output.appendLine(
+		`[crib] ssh plugin bind-mount failed for \`crib ${verb}\` (SSH_AUTH_SOCK unreadable by docker daemon).`,
+	);
+	const choice = await vscode.window.showErrorMessage(
+		`Crib: \`crib ${verb}\` failed because the crib \`ssh\` plugin could not bind-mount SSH_AUTH_SOCK ` +
+			'(Docker cannot read the editor-created agent socket). ' +
+			'Disable SSH agent forwarding for this workspace and retry?',
+		'Disable & Retry',
+		'Open Settings',
+	);
+	if (choice === 'Disable & Retry') {
+		try {
+			await vscode.workspace
+				.getConfiguration(CONFIG_SECTION)
+				.update('forwardSshAgent', false, vscode.ConfigurationTarget.Workspace);
+			deps.output.appendLine(
+				`[crib] crib.forwardSshAgent=false (Workspace); retrying \`crib ${verb}\`.`,
+			);
+			return true;
+		} catch (updateErr) {
+			deps.output.appendLine(
+				`[crib] failed to write crib.forwardSshAgent: ${describe(updateErr)}`,
+			);
+		}
+	} else if (choice === 'Open Settings') {
+		void vscode.commands.executeCommand('workbench.action.openSettings', 'crib.forwardSshAgent');
+	}
+	// Surface the original error tail to help diagnosis.
+	deps.output.appendLine(`[crib] \`crib ${verb}\` stderr tail:\n${err.stderrTail.trim()}`);
+	return false;
 }
 
 function reportError(err: unknown, deps: CommandDeps): void {
@@ -731,6 +807,7 @@ function settings(): SyncSettings & {
 	path: string;
 	autoUpOnAttach: boolean;
 	featureManifestFetch: boolean;
+	forwardSshAgent: boolean;
 } {
 	const cfg = vscode.workspace.getConfiguration(CONFIG_SECTION);
 	return {
@@ -739,5 +816,6 @@ function settings(): SyncSettings & {
 		extraExtensions: cfg.get<string[]>('extraExtensions') ?? [],
 		includeFeatureExtensions: cfg.get<boolean>('includeFeatureExtensions') ?? true,
 		featureManifestFetch: cfg.get<boolean>('featureManifestFetch') ?? true,
+		forwardSshAgent: cfg.get<boolean>('forwardSshAgent') ?? true,
 	};
 }
