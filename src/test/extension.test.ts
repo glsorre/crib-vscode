@@ -42,7 +42,7 @@ suite('Extension Test Suite', () => {
 		}
 	});
 
-	test('operational crib commands are enablement-gated to the workspace extension host', () => {
+	test('lifecycle commands are gated to workspace host and trusted workspace', () => {
 		const pkg = JSON.parse(
 			fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'),
 		) as {
@@ -51,18 +51,34 @@ suite('Extension Test Suite', () => {
 			};
 		};
 		const cmds = pkg.contributes?.commands ?? [];
+		const lifecycle = ['crib.up', 'crib.down', 'crib.restart', 'crib.rebuild', 'crib.remove'];
 		for (const c of cmds) {
-			if (c.command === 'crib.focusOutput') {
+			if (lifecycle.includes(c.command ?? '')) {
 				assert.strictEqual(
 					c.enablement,
-					undefined,
-					'focusOutput should stay available on the UI host',
+					'crib.runsOnWorkspaceHost && crib.trusted',
+					`${c.command} should be gated to workspace host AND trusted workspace`,
 				);
-			} else if (c.command?.startsWith('crib.')) {
+			}
+		}
+	});
+
+	test('non-lifecycle crib commands are enablement-gated to the workspace extension host only', () => {
+		const pkg = JSON.parse(
+			fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'),
+		) as {
+			contributes?: {
+				commands?: Array<{ command?: string; enablement?: string }>;
+			};
+		};
+		const cmds = pkg.contributes?.commands ?? [];
+		const nonLifecycle = ['crib.attach', 'crib.syncNow', 'crib.openConfig', 'crib.refresh'];
+		for (const c of cmds) {
+			if (nonLifecycle.includes(c.command ?? '')) {
 				assert.strictEqual(
 					c.enablement,
 					'crib.runsOnWorkspaceHost',
-					`${c.command} should be gated to workspace host`,
+					`${c.command} should be gated to workspace host only`,
 				);
 			}
 		}
@@ -86,6 +102,7 @@ suite('Extension Test Suite', () => {
 			'crib.attach',
 			'crib.syncNow',
 			'crib.openConfig',
+			'crib.openDevcontainerJson',
 			'crib.refresh',
 			'crib.focusOutput',
 		]) {

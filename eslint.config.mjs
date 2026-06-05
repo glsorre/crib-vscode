@@ -19,6 +19,8 @@ export default [{
             format: ["camelCase", "PascalCase"],
         }],
 
+        "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+
         curly: "warn",
         eqeqeq: "warn",
         "no-throw-literal": "warn",

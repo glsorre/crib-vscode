@@ -3,7 +3,7 @@
  * `attachToRunningContainer`, while Microsoft builds often accept a Docker id or name string.
  */
 export function devContainersAttachArgument(
-	command: string,
+	_command: string,
 	containerName: string,
 	dockerId?: string,
 ): unknown {

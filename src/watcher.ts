@@ -1,3 +1,4 @@
+import { describe } from './util';
 import * as vscode from 'vscode';
 import { DEVCONTAINER_GLOBS, workspaceRootFor } from './devcontainer';
 import { deleteNameConfig } from './nameConfig';
@@ -112,14 +113,10 @@ export async function bootstrapScan(deps: WatcherDeps): Promise<vscode.Uri[]> {
 				await deps.engine.sync(uri, { source: 'bootstrap' });
 			} catch (err) {
 				deps.output.appendLine(
-					`[bootstrap] sync failed for ${displayPath(uri)}: ${describe(err)}`,
+					`[watcher.bootstrap] sync failed for ${displayPath(uri)}: ${describe(err)}`,
 				);
 			}
 		}
 	}
 	return found;
-}
-
-function describe(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
 }

@@ -1,3 +1,4 @@
+import { readUtf8File } from './util';
 import * as vscode from 'vscode';
 import { DevContainerJson, vscodeCustomizations } from './devcontainer';
 import { FeatureCustomizations } from './features';
@@ -143,10 +144,69 @@ export async function deleteNameConfig(target: vscode.Uri): Promise<boolean> {
 	}
 }
 
+/**
+ * Write an imageConfig using the same atomic-tmp-rename strategy as writeNameConfig.
+ * The Dev Containers extension reads `imageConfigs/<image>.json` when attaching
+ * by image name rather than by container name.
+ */
+export async function writeImageConfig(
+	target: vscode.Uri,
+	next: NameConfig,
+	source: string,
+): Promise<{ written: boolean; merged: NameConfig }> {
+	const existing = await readJsonIfExists(target);
+	const previousMarker = (existing?.[MANAGED_BY_KEY] as ManagedMarker | undefined) ?? undefined;
+	const previouslyManaged = new Set(previousMarker?.managedKeys ?? []);
+
+	const merged: Record<string, unknown> = { ...(existing ?? {}) };
+
+	// Drop keys we wrote last time but are no longer producing.
+	for (const key of previouslyManaged) {
+		if (!(key in next)) {
+			delete merged[key];
+		}
+	}
+	// Apply the new managed keys.
+	for (const [k, v] of Object.entries(next)) {
+		merged[k] = v;
+	}
+
+	const managedKeys = Object.keys(next).sort();
+	const marker: ManagedMarker = {
+		tool: 'crib-vscode',
+		managedKeys,
+		source,
+		updatedAt: new Date().toISOString(),
+	};
+	merged[MANAGED_BY_KEY] = marker;
+
+	if (existing && deepEqualWithoutTimestamp(existing, merged)) {
+		return { written: false, merged: merged as NameConfig };
+	}
+
+	const dir = vscode.Uri.joinPath(target, '..');
+	await vscode.workspace.fs.createDirectory(dir);
+	const tmp = vscode.Uri.joinPath(dir, `.${target.path.split('/').pop()}.${process.pid}.tmp`);
+	const payload = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf8');
+	await vscode.workspace.fs.writeFile(tmp, payload);
+	try {
+		await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
+	} catch (err) {
+		// Best effort: drop the temp file before rethrowing.
+		try {
+			await vscode.workspace.fs.delete(tmp);
+		} catch {
+			// ignore
+		}
+		throw err;
+	}
+	return { written: true, merged: merged as NameConfig };
+}
+
 async function readJsonIfExists(uri: vscode.Uri): Promise<Record<string, unknown> | undefined> {
 	try {
-		const bytes = await vscode.workspace.fs.readFile(uri);
-		const parsed = JSON.parse(Buffer.from(bytes).toString('utf8'));
+		const raw = await readUtf8File(uri);
+		const parsed = JSON.parse(raw);
 		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
 			return parsed as Record<string, unknown>;
 		}

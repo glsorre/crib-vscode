@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { spawn, ChildProcess } from 'child_process';
 import { workspaceUriToSpawnCwd } from './paths';
+import { prepareSpawnEnv } from './sshAgentForwarding';
+export { isSshAgentMountError, prepareSpawnEnv } from './sshAgentForwarding';
 import { extractContainerName, extractSourcePath } from './containerName';
 import {
 	extractDockerContainerIdFromStatusJson,
@@ -14,6 +17,14 @@ export class CribNotFoundError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = 'CribNotFoundError';
+	}
+}
+
+/** Non-zero exit from a streaming crib subprocess. Carries a bounded tail of stderr for diagnostics. */
+export class CribExitError extends Error {
+	constructor(message: string, public readonly stderrTail: string) {
+		super(message);
+		this.name = 'CribExitError';
 	}
 }
 
@@ -35,13 +46,41 @@ export interface CribRuntimeWorkspace {
 }
 
 export class CribCli {
+	private sshAuthSockStripLogged = false;
+
 	constructor(
 		private readonly output: vscode.OutputChannel,
 		private readonly resolveBinary: () => string,
+		private readonly resolveForwardSshAgent: () => boolean = () => true,
 	) {}
 
 	get binary(): string {
 		return this.resolveBinary();
+	}
+
+	private async preparedEnv(): Promise<NodeJS.ProcessEnv> {
+		return prepareSpawnEnv(
+			process.env,
+			this.resolveForwardSshAgent(),
+			async path => {
+				try {
+					await fs.promises.access(path, fs.constants.R_OK);
+					return true;
+				} catch {
+					return false;
+				}
+			},
+			sockPath => {
+				if (this.sshAuthSockStripLogged) {
+					return;
+				}
+				this.sshAuthSockStripLogged = true;
+				this.output.appendLine(
+					`[crib] SSH_AUTH_SOCK ${sockPath} unreadable by extension host; ` +
+						'not forwarding to crib (set crib.forwardSshAgent=false to silence this probe).',
+				);
+			},
+		);
 	}
 
 	/** Run `crib up`, streaming to the output channel. */
@@ -162,20 +201,27 @@ export class CribCli {
 		return [];
 	}
 
-	private runStreaming(cwd: vscode.Uri | undefined, args: string[]): Promise<void> {
+	private async runStreaming(cwd: vscode.Uri | undefined, args: string[]): Promise<void> {
 		const bin = this.binary;
-		this.output.appendLine(`$ ${bin} ${args.join(' ')}`);
+		this.output.appendLine(`[crib] $ ${bin} ${args.join(' ')}`);
+		const env = await this.preparedEnv();
 		return new Promise((resolve, reject) => {
-			const proc = spawnSafe(bin, args, cwd);
+			const proc = spawnSafe(bin, args, cwd, env);
+			let stderrTail = '';
+			const tailLimit = 4096;
 			proc.stdout?.on('data', (chunk: Buffer) => this.output.append(chunk.toString()));
-			proc.stderr?.on('data', (chunk: Buffer) => this.output.append(chunk.toString()));
+			proc.stderr?.on('data', (chunk: Buffer) => {
+				const s = chunk.toString();
+				this.output.append(s);
+				stderrTail = (stderrTail + s).slice(-tailLimit);
+			});
 			proc.on('error', err => reject(translateSpawnError(bin, err)));
 			proc.on('close', code => {
-				this.output.appendLine(`[exit ${code ?? 0}]`);
+				this.output.appendLine(`[crib] exit ${code ?? 0}`);
 				if (code === 0) {
 					resolve();
 				} else {
-					reject(new Error(`crib ${args.join(' ')} exited with code ${code}`));
+					reject(new CribExitError(`crib ${args.join(' ')} exited with code ${code}`, stderrTail));
 				}
 			});
 		});
@@ -302,10 +348,11 @@ export class CribCli {
 		});
 	}
 
-	private runCapture(cwd: vscode.Uri | undefined, args: string[]): Promise<string> {
+	private async runCapture(cwd: vscode.Uri | undefined, args: string[]): Promise<string> {
 		const bin = this.binary;
+		const env = await this.preparedEnv();
 		return new Promise((resolve, reject) => {
-			const proc = spawnSafe(bin, args, cwd);
+			const proc = spawnSafe(bin, args, cwd, env);
 			let stdout = '';
 			let stderr = '';
 			proc.stdout?.on('data', (chunk: Buffer) => {
@@ -326,12 +373,12 @@ export class CribCli {
 	}
 }
 
-function spawnSafe(bin: string, args: string[], cwd: vscode.Uri | undefined): ChildProcess {
+function spawnSafe(bin: string, args: string[], cwd: vscode.Uri | undefined, env: NodeJS.ProcessEnv): ChildProcess {
 	const cwdStr = workspaceUriToSpawnCwd(cwd);
 	return spawn(bin, args, {
 		cwd: cwdStr,
 		stdio: ['ignore', 'pipe', 'pipe'],
-		env: { ...process.env },
+		env,
 	});
 }
 
@@ -422,6 +469,7 @@ function recordFromJson(item: unknown): CribRuntimeWorkspace {
 	const source = extractSourcePath(o);
 	const containerName = extractContainerName(o);
 	let workspaceKey: string | undefined;
+	// Keys mirror upstream crib JSON shape (snake_case is intentional).
 	for (const key of ['workspaceId', 'workspace_key', 'slug', 'id', 'workspaceKey']) {
 		const v = o[key];
 		if (typeof v === 'string' && v.trim().length > 0) {

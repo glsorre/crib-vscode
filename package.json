@@ -18,20 +18,21 @@
     "workspace"
   ],
   "activationEvents": [
-    "workspaceContains:**/.devcontainer/devcontainer.json",
     "workspaceContains:**/.devcontainer.json",
+    "workspaceContains:**/.devcontainer/devcontainer.json",
     "onStartupFinished",
     "onView:cribWorkspaces",
-    "onCommand:crib.up",
-    "onCommand:crib.down",
-    "onCommand:crib.restart",
-    "onCommand:crib.rebuild",
-    "onCommand:crib.remove",
     "onCommand:crib.attach",
-    "onCommand:crib.syncNow",
+    "onCommand:crib.down",
+    "onCommand:crib.focusOutput",
     "onCommand:crib.openConfig",
+    "onCommand:crib.openDevcontainerJson",
+    "onCommand:crib.rebuild",
     "onCommand:crib.refresh",
-    "onCommand:crib.focusOutput"
+    "onCommand:crib.remove",
+    "onCommand:crib.restart",
+    "onCommand:crib.syncNow",
+    "onCommand:crib.up"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -41,35 +42,35 @@
         "title": "Up",
         "category": "Crib",
         "icon": "$(play)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.down",
         "title": "Down",
         "category": "Crib",
         "icon": "$(stop)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.restart",
         "title": "Restart",
         "category": "Crib",
         "icon": "$(refresh)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.rebuild",
         "title": "Rebuild",
         "category": "Crib",
         "icon": "$(tools)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.remove",
         "title": "Remove",
         "category": "Crib",
         "icon": "$(trash)",
-        "enablement": "crib.runsOnWorkspaceHost"
+        "enablement": "crib.runsOnWorkspaceHost && crib.trusted"
       },
       {
         "command": "crib.attach",
@@ -96,6 +97,13 @@
         "title": "Refresh Workspaces",
         "category": "Crib",
         "icon": "$(refresh)",
+        "enablement": "crib.runsOnWorkspaceHost"
+      },
+      {
+        "command": "crib.openDevcontainerJson",
+        "title": "Open devcontainer.json",
+        "category": "Crib",
+        "icon": "$(json)",
         "enablement": "crib.runsOnWorkspaceHost"
       },
       {
@@ -135,6 +143,11 @@
           "type": "boolean",
           "default": true,
           "description": "Allow fetching feature manifests from OCI registries when the image is not yet built. Disable for fully offline environments."
+        },
+        "crib.forwardSshAgent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Forward SSH_AUTH_SOCK to the `crib` subprocess so its `ssh` plugin can bind-mount the agent socket into the container. When the editor-created agent socket is unreadable (e.g. Cursor remote-SSH on some hosts), `crib up`/`rebuild` fails with `invalid mount config ... permission denied`; set this to false to strip SSH_AUTH_SOCK from the spawn environment. When true (default), the extension still auto-strips when the socket is provably unreadable."
         }
       }
     },

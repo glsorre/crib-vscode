@@ -18,7 +18,7 @@
 
 ## 3. Functional requirements (as implemented / documented)
 
-- **Sync engine:** Scan + `FileSystemWatcher` on `devcontainer.json` (and related paths); merge feature extensions (image `devcontainer.metadata` preferred; optional OCI feature manifest fetch + cache).
+- **Sync engine:** Scan + `FileSystemWatcher` on `devcontainer.json` (and related paths); merge feature extensions (image `devcontainer.metadata` preferred; optional OCI feature manifest fetch + cache); writes both `nameConfigs/<container>.json` and `imageConfigs/<image>.json` when the config declares an `image` field.
 - **Commands & UI:** Activity bar “Crib” view (workspaces, state, actions); palette commands; remote indicator menu entries gated on `remoteName` / workspace host.
 - **Attach:** Resolve target container name, optional `crib.autoUpOnAttach`, then Dev Containers attach API or bridge command.
 - **Settings:** `crib.path`, `crib.autoUpOnAttach`, `crib.extraExtensions`, `crib.includeFeatureExtensions`, `crib.featureManifestFetch`.
@@ -32,5 +32,4 @@
 ## 5. Known limitations (documented)
 
 - Pre-build feature resolution: anonymous OCI/bearer-style only; private registries beyond that → rely on post-build metadata.
-- Only **nameConfigs**, not **imageConfigs**.
 - Main extension not supported as UI-only for sync/lifecycle; bridge is attach-oriented on the UI host.

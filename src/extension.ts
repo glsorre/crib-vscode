@@ -1,3 +1,4 @@
+import { describe } from './util';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
@@ -7,7 +8,7 @@ import {
 } from './attach';
 import { installAttachExtensionsFallback } from './attachExtensionFallback';
 import { devContainersAttachArgument } from './attachPayload';
-import { CribCli, CribNotFoundError } from './crib';
+import { CribCli, CribExitError, CribNotFoundError, isSshAgentMountError } from './crib';
 import { collectAllDiscoverableTargets, DiscoveredTarget } from './targetDiscovery';
 import { FeatureResolver } from './features';
 import { deleteNameConfig } from './nameConfig';
@@ -24,6 +25,29 @@ import { installWatchers } from './watcher';
 
 const CONFIG_SECTION = 'crib';
 
+/**
+ * Canonical OutputChannel tag taxonomy. Every appendLine SHOULD start with one
+ * of these bracketed tags; domain tags are preferred over severity tags.
+ *
+ * Domain tags:
+ *   [crib]                activation, version probe, host gating, generic CLI lifecycle
+ *   [crib.up|down|restart|rebuild|remove]
+ *                         per-lifecycle subcommand telemetry
+ *   [attach]              attach pipeline (target/Docker id resolution, dispatch)
+ *   [attach.extensions]   remote attach extension-install fallback
+ *   [features]            feature manifest resolver
+ *   [discover]            workspace discovery + tree rebuild
+ *   [poll]                tree-state polling tick
+ *   [watcher]             file-system watcher install + events
+ *   [watcher.bootstrap]   bootstrap scan of pre-existing devcontainer.json
+ *   [container]           container-name resolution from crib status
+ *   [sync]                SyncEngine nameConfig/imageConfig writes
+ *   [docker]              direct `docker` CLI subprocess (not via crib)
+ *   [debug]               one-shot extension-host log-path echo
+ *
+ * Severity-only tags (use when no domain fits):
+ *   [info] [warn] [error] [hint]
+ */
 export function activate(context: vscode.ExtensionContext): void {
 	const output = vscode.window.createOutputChannel('Crib');
 	context.subscriptions.push(output);
@@ -39,6 +63,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			void vscode.commands.executeCommand('setContext', 'crib.runsOnWorkspaceHost', false);
 		},
 	});
+	// Workspace trust: gate lifecycle commands to trusted workspaces only.
+	void vscode.commands.executeCommand('setContext', 'crib.trusted', vscode.workspace.isTrusted);
+	const trustDisposable = vscode.workspace.onDidGrantWorkspaceTrust(() => {
+		void vscode.commands.executeCommand('setContext', 'crib.trusted', true);
+	});
+	context.subscriptions.push(trustDisposable);
 	output.appendLine(
 		'[crib] If this channel is missing from the Output dropdown, run command **Crib: Show Crib Output Log** from the Command Palette (it activates the extension).',
 	);
@@ -67,7 +97,7 @@ function activateBody(
 
 	const storage = getDevContainerStorage(context);
 	output.appendLine(
-		`crib-vscode activating; Dev Containers storage = ${storage.extensionId}, ` +
+		`[crib] crib-vscode activating; Dev Containers storage = ${storage.extensionId}, ` +
 			`globalStorage = ${displayPath(storage.globalStorage)}`,
 	);
 	const hostKind =
@@ -77,7 +107,7 @@ function activateBody(
 				? 'Workspace'
 				: String(context.extension.extensionKind);
 	output.appendLine(
-		`crib-vscode host: extensionKind=${hostKind} (${context.extension.extensionKind}), ` +
+		`[crib] crib-vscode host: extensionKind=${hostKind} (${context.extension.extensionKind}), ` +
 			`remoteName=${vscode.env.remoteName ?? 'local'}`,
 	);
 	if (context.extension.extensionKind === vscode.ExtensionKind.UI) {
@@ -87,7 +117,7 @@ function activateBody(
 		);
 	} else {
 		output.appendLine(
-			'crib-vscode workspace extension host active; sync/up/down/rebuild commands are registered here.',
+			'[crib] crib-vscode workspace extension host active; sync/up/down/rebuild commands are registered here.',
 		);
 	}
 	if (!storage.extensionFound) {
@@ -104,11 +134,11 @@ function activateBody(
 			'[crib] Workspaces tree, `crib` CLI, and Crib commands are not activated on this host (UI extension host). Use **Crib: Show Crib Output Log** here; run Crib from the SSH workspace window.',
 		);
 		registerUiHostCommandStubs(context);
-		output.appendLine('crib-vscode ready');
+		output.appendLine('[crib] crib-vscode ready');
 		return;
 	}
 
-	const crib = new CribCli(output, () => settings().path);
+	const crib = new CribCli(output, () => settings().path, () => settings().forwardSshAgent);
 	output.appendLine(`[crib] crib.path → ${JSON.stringify(crib.binary)} (Remote-SSH: must be on PATH in this host or set in settings)`);
 	void crib.version().then(
 		version => {
@@ -143,6 +173,7 @@ function activateBody(
 	});
 	context.subscriptions.push(treeView);
 	void vscode.commands.executeCommand('setContext', 'crib.hasDevcontainerTargets', false);
+	tree.startPolling();
 
 	registerCommands(context, { engine, crib, tree, output, storage });
 
@@ -164,7 +195,7 @@ function activateBody(
 		}
 	})();
 
-	output.appendLine('crib-vscode ready');
+	output.appendLine('[crib] crib-vscode ready');
 }
 
 
@@ -243,11 +274,31 @@ function registerCommands(context: vscode.ExtensionContext, deps: CommandDeps): 
 	registerSyncCommands(reg, deps);
 }
 
+/** Guard: show trust message and return true if workspace is untrusted. */
+function checkWorkspaceTrust(output: vscode.OutputChannel): boolean {
+	if (vscode.workspace.isTrusted) {
+		return false;
+	}
+	vscode.window.showWarningMessage(
+		'Crib: Workspace is not trusted. Run `Trust Workspace` from the Command Palette to enable lifecycle commands.',
+		'Open Trust Settings',
+	).then(choice => {
+		if (choice === 'Open Trust Settings') {
+			void vscode.commands.executeCommand('workbench.action.openWorkspaceTrustSettings');
+		}
+	}, () => {});
+	output.appendLine('[crib] workspace not trusted; lifecycle command blocked');
+	return true;
+}
+
 function registerLifecycleCommands(
 	reg: (cmd: string, handler: (...args: unknown[]) => unknown) => void,
 	deps: CommandDeps,
 ): void {
 	reg('crib.up', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('up', target, deps, () => deps.crib.up(target.workspaceFolderUri));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
@@ -262,11 +313,17 @@ function registerLifecycleCommands(
 	}));
 
 	reg('crib.down', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('down', target, deps, () => deps.crib.down(target.workspaceFolderUri));
 		deps.tree.refresh();
 	}));
 
 	reg('crib.restart', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('restart', target, deps, () => deps.crib.restart(target.workspaceFolderUri));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
@@ -281,6 +338,9 @@ function registerLifecycleCommands(
 	}));
 
 	reg('crib.rebuild', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		await runCribLifecycle('rebuild', target, deps, () => deps.crib.rebuild(target.workspaceFolderUri));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
@@ -295,6 +355,9 @@ function registerLifecycleCommands(
 	}));
 
 	reg('crib.remove', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (checkWorkspaceTrust(deps.output)) {
+			return;
+		}
 		const confirm = await vscode.window.showWarningMessage(
 			`Remove crib container "${target.containerName}"? The matching nameConfig will also be deleted.`,
 			{ modal: true },
@@ -539,17 +602,33 @@ function registerSyncCommands(
 		}
 	}));
 
+	reg('crib.openDevcontainerJson', (item?: unknown) => withWorkspace(item, deps, async target => {
+		if (!target.devcontainerOnDisk) {
+			vscode.window.showInformationMessage(
+				`No devcontainer.json on disk for workspace "${target.containerName}".`,
+				'Open Folder',
+			).then(choice => {
+				if (choice === 'Open Folder') {
+					void vscode.commands.executeCommand('vscode.openFolder', target.workspaceFolderUri, false);
+				}
+			}, () => {});
+			return;
+		}
+		const doc = await vscode.workspace.openTextDocument(target.devcontainerUri);
+		await vscode.window.showTextDocument(doc);
+	}));
+
 	reg('crib.refresh', () => {
 		deps.tree.refresh();
 	});
 }
 
-type ResolvedTarget = DiscoveredTarget;
+
 
 async function withWorkspace(
 	item: unknown,
 	deps: CommandDeps,
-	fn: (target: ResolvedTarget) => Promise<void>,
+	fn: (target: DiscoveredTarget) => Promise<void>,
 ): Promise<void> {
 	try {
 		const target = await pickWorkspace(item, deps, false);
@@ -565,7 +644,7 @@ async function withWorkspace(
 async function withOptionalWorkspace(
 	item: unknown,
 	deps: CommandDeps,
-	fn: (targets: ResolvedTarget[]) => Promise<void>,
+	fn: (targets: DiscoveredTarget[]) => Promise<void>,
 ): Promise<void> {
 	try {
 		const target = await pickWorkspace(item, deps, true);
@@ -573,7 +652,7 @@ async function withOptionalWorkspace(
 			await fn([target]);
 			return;
 		}
-		const all = await collectAll(deps);
+		const all = await collectAllDiscoverableTargets(deps.crib, msg => deps.output.appendLine(msg));
 		await fn(all);
 	} catch (err) {
 		reportError(err, deps);
@@ -584,7 +663,7 @@ async function pickWorkspace(
 	item: unknown,
 	deps: CommandDeps,
 	allowSyncAll: boolean,
-): Promise<ResolvedTarget | undefined> {
+): Promise<DiscoveredTarget | undefined> {
 	if (item instanceof WorkspaceItem) {
 		return {
 			devcontainerUri: item.data.devcontainerUri,
@@ -593,7 +672,7 @@ async function pickWorkspace(
 			devcontainerOnDisk: item.data.devcontainerOnDisk,
 		};
 	}
-	const all = await collectAll(deps);
+	const all = await collectAllDiscoverableTargets(deps.crib, msg => deps.output.appendLine(msg));
 	if (all.length === 0) {
 		if (!allowSyncAll) {
 			vscode.window.showInformationMessage(
@@ -617,11 +696,7 @@ async function pickWorkspace(
 	return picked?.target;
 }
 
-async function collectAll(deps: CommandDeps): Promise<ResolvedTarget[]> {
-	return collectAllDiscoverableTargets(deps.crib, msg => deps.output.appendLine(msg));
-}
-
-async function ensureUp(target: ResolvedTarget, deps: CommandDeps): Promise<void> {
+async function ensureUp(target: DiscoveredTarget, deps: CommandDeps): Promise<void> {
 	if (!settings().autoUpOnAttach) {
 		return;
 	}
@@ -639,7 +714,7 @@ async function ensureUp(target: ResolvedTarget, deps: CommandDeps): Promise<void
 
 async function runCribLifecycle(
 	verb: string,
-	target: ResolvedTarget,
+	target: DiscoveredTarget,
 	deps: CommandDeps,
 	action: () => Promise<void>,
 ): Promise<void> {
@@ -651,9 +726,62 @@ async function runCribLifecycle(
 			cancellable: false,
 		},
 		async () => {
-			await action();
+			try {
+				await action();
+			} catch (err) {
+				if (err instanceof CribExitError && isSshAgentMountError(err.stderrTail)) {
+					const retry = await offerDisableSshAgentForwarding(verb, err, deps);
+					if (retry) {
+						await action();
+						return;
+					}
+				}
+				throw err;
+			}
 		},
 	);
+}
+
+/**
+ * Triggered when crib's hardcoded ssh plugin fails to bind-mount $SSH_AUTH_SOCK
+ * (Docker daemon cannot stat the editor-created agent socket). Offers a one-click
+ * workspace-scoped disable + immediate retry of the same lifecycle action.
+ */
+async function offerDisableSshAgentForwarding(
+	verb: string,
+	err: CribExitError,
+	deps: CommandDeps,
+): Promise<boolean> {
+	deps.output.appendLine(
+		`[crib] ssh plugin bind-mount failed for \`crib ${verb}\` (SSH_AUTH_SOCK unreadable by docker daemon).`,
+	);
+	const choice = await vscode.window.showErrorMessage(
+		`Crib: \`crib ${verb}\` failed because the crib \`ssh\` plugin could not bind-mount SSH_AUTH_SOCK ` +
+			'(Docker cannot read the editor-created agent socket). ' +
+			'Disable SSH agent forwarding for this workspace and retry?',
+		'Disable & Retry',
+		'Open Settings',
+	);
+	if (choice === 'Disable & Retry') {
+		try {
+			await vscode.workspace
+				.getConfiguration(CONFIG_SECTION)
+				.update('forwardSshAgent', false, vscode.ConfigurationTarget.Workspace);
+			deps.output.appendLine(
+				`[crib] crib.forwardSshAgent=false (Workspace); retrying \`crib ${verb}\`.`,
+			);
+			return true;
+		} catch (updateErr) {
+			deps.output.appendLine(
+				`[crib] failed to write crib.forwardSshAgent: ${describe(updateErr)}`,
+			);
+		}
+	} else if (choice === 'Open Settings') {
+		void vscode.commands.executeCommand('workbench.action.openSettings', 'crib.forwardSshAgent');
+	}
+	// Surface the original error tail to help diagnosis.
+	deps.output.appendLine(`[crib] \`crib ${verb}\` stderr tail:\n${err.stderrTail.trim()}`);
+	return false;
 }
 
 function reportError(err: unknown, deps: CommandDeps): void {
@@ -675,14 +803,11 @@ function reportError(err: unknown, deps: CommandDeps): void {
 	void vscode.window.showErrorMessage(`Crib: ${msg}`);
 }
 
-function describe(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
-}
-
 function settings(): SyncSettings & {
 	path: string;
 	autoUpOnAttach: boolean;
 	featureManifestFetch: boolean;
+	forwardSshAgent: boolean;
 } {
 	const cfg = vscode.workspace.getConfiguration(CONFIG_SECTION);
 	return {
@@ -691,5 +816,6 @@ function settings(): SyncSettings & {
 		extraExtensions: cfg.get<string[]>('extraExtensions') ?? [],
 		includeFeatureExtensions: cfg.get<boolean>('includeFeatureExtensions') ?? true,
 		featureManifestFetch: cfg.get<boolean>('featureManifestFetch') ?? true,
+		forwardSshAgent: cfg.get<boolean>('forwardSshAgent') ?? true,
 	};
 }

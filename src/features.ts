@@ -1,3 +1,4 @@
+import { describe, readUtf8File } from './util';
 import * as https from 'https';
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
@@ -108,8 +109,8 @@ export class FeatureResolver {
 	private async readCache(parts: FeatureRefParts): Promise<FeatureCustomizations | undefined> {
 		const file = this.cacheUri(parts);
 		try {
-			const bytes = await vscode.workspace.fs.readFile(file);
-			const parsed = JSON.parse(Buffer.from(bytes).toString('utf8')) as FeatureCacheEntry;
+			const raw = await readUtf8File(file);
+			const parsed = JSON.parse(raw) as FeatureCacheEntry;
 			if (parsed && parsed.customizations) {
 				return parsed.customizations;
 			}
@@ -386,11 +387,4 @@ function runCapture(cmd: string, args: string[]): Promise<string> {
 			}
 		});
 	});
-}
-
-function describe(err: unknown): string {
-	if (err instanceof Error) {
-		return err.message;
-	}
-	return String(err);
 }
