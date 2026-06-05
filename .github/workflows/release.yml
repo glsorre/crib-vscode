@@ -21,6 +21,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Releasing version $VERSION"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          (cd ui-bridge && npm version "$VERSION" --no-git-tag-version --allow-same-version)
+
       - name: Compile
         run: npm run compile
 
@@ -31,25 +38,30 @@ jobs:
         working-directory: ui-bridge
         run: npx --yes @vscode/vsce package -o ../crib-vscode-attach-bridge.vsix
 
-      - name: Publish main extension to Visual Studio Marketplace
-        run: npx --yes @vscode/vsce publish --packagePath crib-vscode-main.vsix -p "$VSCE_PAT"
+      - name: Publish to Visual Studio Marketplace and Open VSX
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-
-      - name: Publish attach bridge to Visual Studio Marketplace
-        run: npx --yes @vscode/vsce publish --packagePath crib-vscode-attach-bridge.vsix -p "$VSCE_PAT"
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-
-      - name: Publish main extension to Open VSX
-        run: npx --yes ovsx publish crib-vscode-main.vsix -p "$OVSX_PAT"
-        env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-
-      - name: Publish attach bridge to Open VSX
-        run: npx --yes ovsx publish crib-vscode-attach-bridge.vsix -p "$OVSX_PAT"
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -u
+          # Run a publish command; treat "already published" as success so a
+          # partial failure can be safely re-run on the same tag.
+          publish() {
+            local out status
+            out=$("$@" 2>&1); status=$?
+            printf '%s\n' "$out"
+            if [ "$status" -ne 0 ]; then
+              if printf '%s' "$out" | grep -qiE "already (exists|published)"; then
+                echo "::warning::Version already published; skipping."
+                return 0
+              fi
+              return "$status"
+            fi
+          }
+          publish npx --yes @vscode/vsce publish --packagePath crib-vscode-main.vsix -p "$VSCE_PAT"
+          publish npx --yes @vscode/vsce publish --packagePath crib-vscode-attach-bridge.vsix -p "$VSCE_PAT"
+          publish npx --yes ovsx publish crib-vscode-main.vsix -p "$OVSX_PAT"
+          publish npx --yes ovsx publish crib-vscode-attach-bridge.vsix -p "$OVSX_PAT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
