@@ -9,6 +9,13 @@ async function main() {
 		bundle: true,
 		format: 'cjs',
 		platform: 'node',
+		// Prefer ESM builds of dependencies (e.g. jsonc-parser) so esbuild can
+		// statically bundle their submodules. The default node `mainFields`
+		// (`['main', 'module']`) picks jsonc-parser's UMD entry, which hides its
+		// `require('./impl/format')` calls behind a factory parameter named
+		// `require` that esbuild cannot follow — leaving a bare runtime require
+		// that fails to resolve relative to dist/extension.js.
+		mainFields: ['module', 'main'],
 		// VS Code 1.105 ships a Node 20 extension-host runtime.
 		target: 'node20',
 		outfile: 'dist/extension.js',
