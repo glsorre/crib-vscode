@@ -32,6 +32,18 @@ jobs:
       - name: Package main extension (smoke check)
         run: npx --yes @vscode/vsce package --no-dependencies -o "$RUNNER_TEMP/main.vsix"
 
+      - name: Verify runtime deps are bundled into the VSIX
+        # The extension is bundled with esbuild, so dependencies must be inlined.
+        # If a runtime require survives, the published extension fails to activate
+        # with "Cannot find module ..." (see 0.1.6 jsonc-parser regression).
+        run: |
+          set -euo pipefail
+          unzip -l "$RUNNER_TEMP/main.vsix" | grep -q "extension/dist/extension.js"
+          if unzip -p "$RUNNER_TEMP/main.vsix" extension/dist/extension.js | grep -q 'require("jsonc-parser")'; then
+            echo "::error::jsonc-parser is required at runtime but not bundled into the VSIX"
+            exit 1
+          fi
+
       - name: Package attach bridge (smoke check)
         working-directory: ui-bridge
         run: npx --yes @vscode/vsce package -o "$RUNNER_TEMP/bridge.vsix"

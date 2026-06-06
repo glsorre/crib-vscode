@@ -1,7 +1,9 @@
 .vscode/**
 .vscode-test/**
 src/**
-out/test/**
+out/**
+node_modules/**
+esbuild.js
 .github/**
 CLAUDE.md
 SPEC.md
