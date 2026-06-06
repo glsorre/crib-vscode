@@ -2,7 +2,7 @@
   "name": "crib-vscode-main",
   "displayName": "Crib Extension",
   "description": "Open any crib devcontainer with a single click.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "publisher": "rightright-me",
   "repository": {
     "type": "git",
