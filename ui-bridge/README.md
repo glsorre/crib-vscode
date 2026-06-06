@@ -8,19 +8,29 @@ For full setup and user workflow, see the main [README](https://github.com/glsor
 
 ## When you need it
 
-- **Required:** Cursor Remote-SSH (main extension is remote, bridge is local UI host)
-- **Usually not required:** local folder windows or standard VS Code Remote-SSH
+- **Required:** any Remote-SSH window — **VS Code and Cursor alike** (the main extension runs on the remote, the bridge runs on the local UI host). Also WSL / attached-container windows.
+- **Not required:** local folder windows, where the main extension and Dev Containers run on the same machine and attach is direct.
+
+The bridge is needed because Dev Containers' "Attach to Running Container" is a UI-host command that is never registered on a Remote-SSH host, so the remote main extension has nothing to call without it.
 
 ## Install
 
-From repo root:
+Recommended — install from the Marketplace / Open VSX on the **local** machine:
+
+```
+rightright-me.crib-vscode-attach-bridge
+```
+
+Or build and install the vsix from the repo root:
 
 ```sh
 cd ui-bridge
-npx vsce package --no-rewrite-relative-links -o crib-vscode-attach-bridge-0.1.1.vsix
+npx vsce package --no-rewrite-relative-links -o ../crib-vscode-attach-bridge.vsix
 cd ..
-cp ./ui-bridge/crib-vscode-attach-bridge-0.1.1.vsix ./
-cursor --install-extension ./crib-vscode-attach-bridge-0.1.1.vsix
+# VS Code:
+code --install-extension ./crib-vscode-attach-bridge.vsix
+# Cursor:
+cursor --install-extension ./crib-vscode-attach-bridge.vsix
 ```
 
 ## How it works
