@@ -2,7 +2,7 @@
   "name": "crib-vscode-attach-bridge",
   "displayName": "Crib Attach Bridge",
   "description": "UI-host bridge for attaching to crib containers through Dev Containers.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "rightright-me",
   "engines": {
     "vscode": "^1.105.0"

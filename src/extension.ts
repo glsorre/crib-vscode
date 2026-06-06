@@ -6,7 +6,6 @@ import {
 	resolveAttachTarget,
 	UI_ATTACH_BRIDGE_COMMAND,
 } from './attach';
-import { installAttachExtensionsFallback } from './attachExtensionFallback';
 import { devContainersAttachArgument } from './attachPayload';
 import {
 	CribCli,
@@ -43,7 +42,6 @@ const CONFIG_SECTION = 'crib';
  *   [crib.up|down|restart|rebuild|remove]
  *                         per-lifecycle subcommand telemetry
  *   [attach]              attach pipeline (target/Docker id resolution, dispatch)
- *   [attach.extensions]   remote attach extension-install fallback
  *   [features]            feature manifest resolver
  *   [discover]            workspace discovery + tree rebuild
  *   [poll]                tree-state polling tick
@@ -426,7 +424,11 @@ function registerAttachCommand(
 		}
 		if (attachTarget.kind === 'direct' && dockerId) {
 			const payload = devContainersAttachArgument(attachTarget.command, result.containerName, dockerId);
-			const uiBridgeConfig = await readNameConfigForUiBridge(result.nameConfigUri, deps);
+			const consumed = await readNameConfigForUiBridge(result.nameConfigUri, deps);
+			deps.output.appendLine(
+				`[attach] nameConfig consumed by Dev Containers from ${displayPath(result.nameConfigUri)}; ` +
+					`${consumed.extensionsCount ?? 0} extension(s)`,
+			);
 			deps.output.appendLine(
 				`[attach] invoking direct command ${attachTarget.command} with docker id payload`,
 			);
@@ -435,7 +437,6 @@ function registerAttachCommand(
 					attachTarget.command,
 					payload,
 				);
-				await runRemoteAttachExtensionFallback('direct', true, uiBridgeConfig.nameConfig, deps);
 			} catch (err) {
 				const reason = describe(err);
 				deps.output.appendLine(`[attach] direct command failed: ${reason}`);
@@ -455,10 +456,11 @@ function registerAttachCommand(
 			const uiBridgeConfig = await readNameConfigForUiBridge(result.nameConfigUri, deps);
 			if (uiBridgeConfig.nameConfig) {
 				deps.output.appendLine(
-					`[attach] loaded nameConfig for UI bridge: ${uiBridgeConfig.extensionsCount ?? 0} extension(s)`,
+					`[attach] nameConfig consumed by Dev Containers (UI host) from ${displayPath(result.nameConfigUri)}; ` +
+						`${uiBridgeConfig.extensionsCount ?? 0} extension(s)`,
 				);
 			}
-			const attachSucceeded = await executeUiAttachBridge(
+			await executeUiAttachBridge(
 				{
 					containerName: result.containerName,
 					containerId: dockerId,
@@ -466,7 +468,6 @@ function registerAttachCommand(
 				},
 				deps,
 			);
-			await runRemoteAttachExtensionFallback('uiBridge', attachSucceeded, uiBridgeConfig.nameConfig, deps);
 			return;
 		}
 		if (attachTarget.kind === 'direct' && !dockerId) {
@@ -488,7 +489,7 @@ function registerAttachCommand(
 async function executeUiAttachBridge(
 	payload: { readonly containerName: string; readonly containerId?: string; readonly nameConfig?: unknown },
 	deps: CommandDeps,
-): Promise<boolean> {
+): Promise<void> {
 	try {
 		if (!payload.containerId) {
 			deps.output.appendLine(
@@ -501,7 +502,6 @@ async function executeUiAttachBridge(
 				')',
 		);
 		await vscode.commands.executeCommand(UI_ATTACH_BRIDGE_COMMAND, payload);
-		return true;
 	} catch (err) {
 		const reason = describe(err);
 		deps.output.appendLine(`[attach] UI bridge failed: ${reason}`);
@@ -509,30 +509,7 @@ async function executeUiAttachBridge(
 			'Crib: nameConfig was synced, but the UI attach bridge is unavailable. ' +
 				'Install the Crib Attach Bridge extension locally, reload the Remote-SSH window, and retry attach.',
 		);
-		return false;
 	}
-}
-
-async function runRemoteAttachExtensionFallback(
-	route: 'direct' | 'uiBridge',
-	attachSucceeded: boolean,
-	nameConfig: unknown,
-	deps: CommandDeps,
-): Promise<void> {
-	await installAttachExtensionsFallback({
-		remoteName: vscode.env.remoteName,
-		route,
-		attachSucceeded,
-		nameConfig,
-		installedExtensionIds: vscode.extensions.all.map(ext => ext.id),
-		installExtension: async id => {
-			await vscode.commands.executeCommand('workbench.extensions.installExtension', id);
-		},
-		log: line => deps.output.appendLine(line),
-		notifyFailure: line => {
-			void vscode.window.showWarningMessage(line);
-		},
-	});
 }
 
 async function readNameConfigForUiBridge(
