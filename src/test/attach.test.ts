@@ -48,6 +48,38 @@ suite('attach resolution', () => {
 		);
 	});
 
+	test('preferUiBridge routes via the bridge even when a (proxied) direct command exists', () => {
+		// Cursor Remote-SSH: the direct command is proxied into the workspace host but the
+		// Dev Containers extension lives on the UI host, so only the bridge delivers config.
+		assert.deepStrictEqual(
+			resolveAttachTarget(
+				[UI_ATTACH_BRIDGE_COMMAND, 'remote-containers.attachToRunningContainer'],
+				{ preferUiBridge: true },
+			),
+			{ kind: 'uiBridge', command: UI_ATTACH_BRIDGE_COMMAND, registered: true },
+		);
+	});
+
+	test('preferUiBridge still routes via the bridge when only a proxied direct command is present', () => {
+		assert.deepStrictEqual(
+			resolveAttachTarget(['remote-containers.attachToRunningContainer'], {
+				preferUiBridge: true,
+				allowUiBridgeFallback: true,
+			}),
+			{ kind: 'uiBridge', command: UI_ATTACH_BRIDGE_COMMAND, registered: false },
+		);
+	});
+
+	test('preferUiBridge=false keeps the direct route (local / co-located Dev Containers)', () => {
+		assert.deepStrictEqual(
+			resolveAttachTarget(
+				[UI_ATTACH_BRIDGE_COMMAND, 'remote-containers.attachToRunningContainer'],
+				{ preferUiBridge: false },
+			),
+			{ kind: 'direct', command: 'remote-containers.attachToRunningContainer' },
+		);
+	});
+
 	test('can optimistically target the UI bridge for command activation', () => {
 		assert.deepStrictEqual(
 			resolveAttachTarget([], { allowUiBridgeFallback: true }),

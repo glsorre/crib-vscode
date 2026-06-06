@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import {
 	hasContainerName,
 	resolveAttachTarget,
+	resolveDirectAttachCommand,
 	UI_ATTACH_BRIDGE_COMMAND,
 } from './attach';
 import { devContainersAttachArgument } from './attachPayload';
@@ -199,7 +200,7 @@ function activateBody(
 
 	void (async () => {
 		try {
-			await logAttachCapability(output);
+			await logAttachCapability(output, !storage.extensionFound);
 		} catch (err) {
 			output.appendLine(`[info] attach capability probe failed: ${describe(err)}`);
 		}
@@ -241,9 +242,12 @@ function registerUiHostCommandStubs(context: vscode.ExtensionContext): void {
 	}
 }
 
-async function logAttachCapability(output: vscode.OutputChannel): Promise<void> {
+async function logAttachCapability(
+	output: vscode.OutputChannel,
+	preferUiBridge: boolean,
+): Promise<void> {
 	const commands = await vscode.commands.getCommands(false);
-	const target = resolveAttachTarget(commands);
+	const target = resolveAttachTarget(commands, { preferUiBridge });
 	if (target.kind === 'direct') {
 		output.appendLine(`[info] attach capability available via ${target.command}`);
 		return;
@@ -409,7 +413,22 @@ function registerAttachCommand(
 		}
 		await activateDevContainerExtensions();
 		const commands = await vscode.commands.getCommands(false);
-		const attachTarget = resolveAttachTarget(commands, { allowUiBridgeFallback: true });
+		// When the Dev Containers extension is not actually present in this host
+		// (`extensionFound === false`, typically Cursor Remote-SSH), any "direct" attach
+		// command is only a proxied UI-host command. Invoking it directly would attach on
+		// the UI host while reading the UI host's nameConfigs — which we never wrote there.
+		// Route via the UI bridge so it lands the nameConfig on the UI host first.
+		const preferUiBridge = !deps.storage.extensionFound;
+		const attachTarget = resolveAttachTarget(commands, {
+			allowUiBridgeFallback: true,
+			preferUiBridge,
+		});
+		if (preferUiBridge && resolveDirectAttachCommand(commands) && attachTarget.kind === 'uiBridge') {
+			deps.output.appendLine(
+				'[attach] direct command present but Dev Containers not in this host ' +
+					'(extensionFound=false); routing via UI bridge so the nameConfig reaches the UI host.',
+			);
+		}
 		deps.output.appendLine(
 			`[attach] target=${attachTarget.kind}, requestedName=${result.containerName}`,
 		);
