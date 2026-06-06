@@ -48,3 +48,37 @@ export async function prepareSpawnEnv(
 	}
 	return env;
 }
+
+/**
+ * One rung of the SSH-agent fallback ladder:
+ *   - `forward`: hand crib the real SSH_AUTH_SOCK (works on unconfined Docker)
+ *   - `relay`:   hand crib a host-local $HOME relay socket the daemon can bind-mount
+ *   - `off`:     strip SSH_AUTH_SOCK entirely (container up without the agent)
+ */
+export type SshAgentAttempt = { mode: 'forward' | 'relay' | 'off' };
+
+/**
+ * Run `run` against each attempt in order, falling through to the next only when
+ * `shouldFallback(err)` is true. Returns once an attempt succeeds; rethrows the last
+ * error if all attempts are exhausted, and rethrows immediately on a non-fallback error.
+ * Pure: side effects (starting relays, notifications) live inside the injected `run`.
+ */
+export async function runWithSshAgentFallback(
+	attempts: readonly SshAgentAttempt[],
+	run: (attempt: SshAgentAttempt) => Promise<void>,
+	shouldFallback: (err: unknown) => boolean,
+): Promise<void> {
+	let lastErr: unknown;
+	for (const attempt of attempts) {
+		try {
+			await run(attempt);
+			return;
+		} catch (err) {
+			lastErr = err;
+			if (!shouldFallback(err)) {
+				throw err;
+			}
+		}
+	}
+	throw lastErr;
+}

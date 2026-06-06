@@ -1,5 +1,10 @@
 import * as assert from 'assert';
-import { isSshAgentMountError, prepareSpawnEnv } from '../sshAgentForwarding';
+import {
+	isSshAgentMountError,
+	prepareSpawnEnv,
+	runWithSshAgentFallback,
+	SshAgentAttempt,
+} from '../sshAgentForwarding';
 
 suite('isSshAgentMountError', () => {
 	test('matches Cursor remote-SSH agent socket bind-mount failure', () => {
@@ -89,5 +94,66 @@ suite('prepareSpawnEnv', () => {
 		await prepareSpawnEnv(base, false, readable, () => {});
 		assert.strictEqual(base.SSH_AUTH_SOCK, '/tmp/sock');
 		assert.strictEqual(base.KEEP, 'me');
+	});
+});
+
+suite('runWithSshAgentFallback', () => {
+	const mountErr = new Error('invalid mount config for type "bind": stat /tmp/x.sock: permission denied');
+	const isMount = (err: unknown): boolean =>
+		err instanceof Error && isSshAgentMountError(err.message);
+	const ladder: SshAgentAttempt[] = [{ mode: 'forward' }, { mode: 'relay' }, { mode: 'off' }];
+
+	test('first attempt succeeds: runs once, no fallback', async () => {
+		const seen: SshAgentAttempt[] = [];
+		await runWithSshAgentFallback(ladder, async a => { seen.push(a); }, isMount);
+		assert.deepStrictEqual(seen, [{ mode: 'forward' }]);
+	});
+
+	test('falls through attempts in order until one succeeds', async () => {
+		const seen: SshAgentAttempt[] = [];
+		await runWithSshAgentFallback(
+			ladder,
+			async a => {
+				seen.push(a);
+				if (a.mode !== 'relay') {
+					throw mountErr;
+				}
+			},
+			isMount,
+		);
+		assert.deepStrictEqual(seen, [{ mode: 'forward' }, { mode: 'relay' }]);
+	});
+
+	test('rethrows immediately on a non-fallback error without trying more attempts', async () => {
+		const seen: SshAgentAttempt[] = [];
+		const boom = new Error('unrelated failure');
+		await assert.rejects(
+			runWithSshAgentFallback(
+				ladder,
+				async a => {
+					seen.push(a);
+					throw boom;
+				},
+				isMount,
+			),
+			/unrelated failure/,
+		);
+		assert.deepStrictEqual(seen, [{ mode: 'forward' }]);
+	});
+
+	test('rethrows the last error when all attempts are exhausted', async () => {
+		const seen: SshAgentAttempt[] = [];
+		await assert.rejects(
+			runWithSshAgentFallback(
+				ladder,
+				async a => {
+					seen.push(a);
+					throw mountErr;
+				},
+				isMount,
+			),
+			/permission denied/,
+		);
+		assert.deepStrictEqual(seen, ladder);
 	});
 });

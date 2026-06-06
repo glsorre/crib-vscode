@@ -3,7 +3,20 @@ import * as fs from 'fs';
 import { spawn, ChildProcess } from 'child_process';
 import { workspaceUriToSpawnCwd } from './paths';
 import { prepareSpawnEnv } from './sshAgentForwarding';
-export { isSshAgentMountError, prepareSpawnEnv } from './sshAgentForwarding';
+export {
+	isSshAgentMountError,
+	prepareSpawnEnv,
+	runWithSshAgentFallback,
+	type SshAgentAttempt,
+} from './sshAgentForwarding';
+
+/** Per-invocation overrides for how SSH_AUTH_SOCK is handed to the crib subprocess. */
+export interface SpawnEnvOverrides {
+	/** Force-enable/disable forwarding for this call, ignoring the configured setting. */
+	forwardSshAgent?: boolean;
+	/** Use this socket path as SSH_AUTH_SOCK instead of the inherited one (e.g. a relay). */
+	sshAuthSockOverride?: string;
+}
 import { extractContainerName, extractSourcePath } from './containerName';
 import {
 	extractDockerContainerIdFromStatusJson,
@@ -58,10 +71,13 @@ export class CribCli {
 		return this.resolveBinary();
 	}
 
-	private async preparedEnv(): Promise<NodeJS.ProcessEnv> {
+	private async preparedEnv(overrides: SpawnEnvOverrides = {}): Promise<NodeJS.ProcessEnv> {
+		const baseEnv = overrides.sshAuthSockOverride
+			? { ...process.env, SSH_AUTH_SOCK: overrides.sshAuthSockOverride }
+			: process.env;
 		return prepareSpawnEnv(
-			process.env,
-			this.resolveForwardSshAgent(),
+			baseEnv,
+			overrides.forwardSshAgent ?? this.resolveForwardSshAgent(),
 			async path => {
 				try {
 					await fs.promises.access(path, fs.constants.R_OK);
@@ -84,28 +100,28 @@ export class CribCli {
 	}
 
 	/** Run `crib up`, streaming to the output channel. */
-	up(cwd: vscode.Uri, opts: { recreate?: boolean } = {}): Promise<void> {
+	up(cwd: vscode.Uri, opts: { recreate?: boolean } & SpawnEnvOverrides = {}): Promise<void> {
 		const args = ['up'];
 		if (opts.recreate) {
 			args.push('--recreate');
 		}
-		return this.runStreaming(cwd, args);
+		return this.runStreaming(cwd, args, opts);
 	}
 
-	down(cwd: vscode.Uri): Promise<void> {
-		return this.runStreaming(cwd, ['down']);
+	down(cwd: vscode.Uri, opts: SpawnEnvOverrides = {}): Promise<void> {
+		return this.runStreaming(cwd, ['down'], opts);
 	}
 
-	restart(cwd: vscode.Uri): Promise<void> {
-		return this.runStreaming(cwd, ['restart']);
+	restart(cwd: vscode.Uri, opts: SpawnEnvOverrides = {}): Promise<void> {
+		return this.runStreaming(cwd, ['restart'], opts);
 	}
 
-	rebuild(cwd: vscode.Uri): Promise<void> {
-		return this.runStreaming(cwd, ['rebuild']);
+	rebuild(cwd: vscode.Uri, opts: SpawnEnvOverrides = {}): Promise<void> {
+		return this.runStreaming(cwd, ['rebuild'], opts);
 	}
 
-	remove(cwd: vscode.Uri): Promise<void> {
-		return this.runStreaming(cwd, ['remove']);
+	remove(cwd: vscode.Uri, opts: SpawnEnvOverrides = {}): Promise<void> {
+		return this.runStreaming(cwd, ['remove'], opts);
 	}
 
 	async version(): Promise<string | undefined> {
@@ -201,10 +217,14 @@ export class CribCli {
 		return [];
 	}
 
-	private async runStreaming(cwd: vscode.Uri | undefined, args: string[]): Promise<void> {
+	private async runStreaming(
+		cwd: vscode.Uri | undefined,
+		args: string[],
+		overrides: SpawnEnvOverrides = {},
+	): Promise<void> {
 		const bin = this.binary;
 		this.output.appendLine(`[crib] $ ${bin} ${args.join(' ')}`);
-		const env = await this.preparedEnv();
+		const env = await this.preparedEnv(overrides);
 		return new Promise((resolve, reject) => {
 			const proc = spawnSafe(bin, args, cwd, env);
 			let stderrTail = '';

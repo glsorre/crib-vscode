@@ -8,7 +8,16 @@ import {
 } from './attach';
 import { installAttachExtensionsFallback } from './attachExtensionFallback';
 import { devContainersAttachArgument } from './attachPayload';
-import { CribCli, CribExitError, CribNotFoundError, isSshAgentMountError } from './crib';
+import {
+	CribCli,
+	CribExitError,
+	CribNotFoundError,
+	isSshAgentMountError,
+	runWithSshAgentFallback,
+	type SpawnEnvOverrides,
+	type SshAgentAttempt,
+} from './crib';
+import { AgentRelayManager } from './sshAgentRelay';
 import { collectAllDiscoverableTargets, DiscoveredTarget } from './targetDiscovery';
 import { FeatureResolver } from './features';
 import { deleteNameConfig } from './nameConfig';
@@ -175,7 +184,10 @@ function activateBody(
 	void vscode.commands.executeCommand('setContext', 'crib.hasDevcontainerTargets', false);
 	tree.startPolling();
 
-	registerCommands(context, { engine, crib, tree, output, storage });
+	const agentRelays = new AgentRelayManager();
+	context.subscriptions.push({ dispose: () => void agentRelays.disposeAll() });
+
+	registerCommands(context, { engine, crib, tree, output, storage, agentRelays });
 
 	// Avoid blocking Remote-SSH activation: getCommands(true) activates many extensions over IPC;
 	// bootstrap findFiles competes with the same host. Defer both until after activate() returns.
@@ -263,6 +275,7 @@ interface CommandDeps {
 	tree: CribTreeDataProvider;
 	output: vscode.OutputChannel;
 	storage: ReturnType<typeof getDevContainerStorage>;
+	agentRelays: AgentRelayManager;
 }
 
 function registerCommands(context: vscode.ExtensionContext, deps: CommandDeps): void {
@@ -299,7 +312,7 @@ function registerLifecycleCommands(
 		if (checkWorkspaceTrust(deps.output)) {
 			return;
 		}
-		await runCribLifecycle('up', target, deps, () => deps.crib.up(target.workspaceFolderUri));
+		await runCribLifecycle('up', target, deps, opts => deps.crib.up(target.workspaceFolderUri, opts));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
 				source: 'crib.up',
@@ -316,7 +329,7 @@ function registerLifecycleCommands(
 		if (checkWorkspaceTrust(deps.output)) {
 			return;
 		}
-		await runCribLifecycle('down', target, deps, () => deps.crib.down(target.workspaceFolderUri));
+		await runCribLifecycle('down', target, deps, opts => deps.crib.down(target.workspaceFolderUri, opts));
 		deps.tree.refresh();
 	}));
 
@@ -324,7 +337,7 @@ function registerLifecycleCommands(
 		if (checkWorkspaceTrust(deps.output)) {
 			return;
 		}
-		await runCribLifecycle('restart', target, deps, () => deps.crib.restart(target.workspaceFolderUri));
+		await runCribLifecycle('restart', target, deps, opts => deps.crib.restart(target.workspaceFolderUri, opts));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
 				source: 'crib.restart',
@@ -341,7 +354,7 @@ function registerLifecycleCommands(
 		if (checkWorkspaceTrust(deps.output)) {
 			return;
 		}
-		await runCribLifecycle('rebuild', target, deps, () => deps.crib.rebuild(target.workspaceFolderUri));
+		await runCribLifecycle('rebuild', target, deps, opts => deps.crib.rebuild(target.workspaceFolderUri, opts));
 		if (target.devcontainerOnDisk) {
 			await deps.engine.sync(target.devcontainerUri, {
 				source: 'crib.rebuild',
@@ -366,7 +379,7 @@ function registerLifecycleCommands(
 		if (confirm !== 'Remove') {
 			return;
 		}
-		await runCribLifecycle('remove', target, deps, () => deps.crib.remove(target.workspaceFolderUri));
+		await runCribLifecycle('remove', target, deps, opts => deps.crib.remove(target.workspaceFolderUri, opts));
 		await deleteNameConfig(nameConfigUri(deps.storage, target.containerName));
 		deps.tree.refresh();
 	}));
@@ -709,79 +722,85 @@ async function ensureUp(target: DiscoveredTarget, deps: CommandDeps): Promise<vo
 	if (status.state === 'up') {
 		return;
 	}
-	await runCribLifecycle('up', target, deps, () => deps.crib.up(target.workspaceFolderUri));
+	await runCribLifecycle('up', target, deps, opts => deps.crib.up(target.workspaceFolderUri, opts));
 }
 
 async function runCribLifecycle(
 	verb: string,
 	target: DiscoveredTarget,
 	deps: CommandDeps,
-	action: () => Promise<void>,
+	action: (opts: SpawnEnvOverrides) => Promise<void>,
 ): Promise<void> {
 	deps.output.show(true);
+	const realSock = process.env.SSH_AUTH_SOCK;
+	// When forwarding the editor agent socket, fall back forward → relay → off on the
+	// crib `ssh` plugin's bind-mount failure (Docker daemon can't stat the editor socket).
+	const attempts: SshAgentAttempt[] =
+		settings().forwardSshAgent && realSock
+			? [{ mode: 'forward' }, { mode: 'relay' }, { mode: 'off' }]
+			: [{ mode: 'forward' }];
 	await vscode.window.withProgress(
 		{
 			location: vscode.ProgressLocation.Notification,
 			title: `crib ${verb} (${target.containerName})`,
 			cancellable: false,
 		},
-		async () => {
-			try {
-				await action();
-			} catch (err) {
-				if (err instanceof CribExitError && isSshAgentMountError(err.stderrTail)) {
-					const retry = await offerDisableSshAgentForwarding(verb, err, deps);
-					if (retry) {
-						await action();
-						return;
-					}
-				}
-				throw err;
-			}
-		},
+		() =>
+			runWithSshAgentFallback(
+				attempts,
+				async attempt => {
+					const overrides = await resolveAttemptOverrides(attempt, verb, target, deps, realSock);
+					await action(overrides);
+				},
+				err => err instanceof CribExitError && isSshAgentMountError(err.stderrTail),
+			),
 	);
 }
 
 /**
- * Triggered when crib's hardcoded ssh plugin fails to bind-mount $SSH_AUTH_SOCK
- * (Docker daemon cannot stat the editor-created agent socket). Offers a one-click
- * workspace-scoped disable + immediate retry of the same lifecycle action.
+ * Map a fallback rung to crib spawn overrides, emitting a (non-modal) notice when we step
+ * past the initial `forward` attempt. `relay` exposes the agent at a $HOME socket the Docker
+ * daemon can bind-mount; `off` brings the container up without the agent (setting untouched).
  */
-async function offerDisableSshAgentForwarding(
+async function resolveAttemptOverrides(
+	attempt: SshAgentAttempt,
 	verb: string,
-	err: CribExitError,
+	target: DiscoveredTarget,
 	deps: CommandDeps,
-): Promise<boolean> {
-	deps.output.appendLine(
-		`[crib] ssh plugin bind-mount failed for \`crib ${verb}\` (SSH_AUTH_SOCK unreadable by docker daemon).`,
-	);
-	const choice = await vscode.window.showErrorMessage(
-		`Crib: \`crib ${verb}\` failed because the crib \`ssh\` plugin could not bind-mount SSH_AUTH_SOCK ` +
-			'(Docker cannot read the editor-created agent socket). ' +
-			'Disable SSH agent forwarding for this workspace and retry?',
-		'Disable & Retry',
-		'Open Settings',
-	);
-	if (choice === 'Disable & Retry') {
-		try {
-			await vscode.workspace
-				.getConfiguration(CONFIG_SECTION)
-				.update('forwardSshAgent', false, vscode.ConfigurationTarget.Workspace);
+	realSock: string | undefined,
+): Promise<SpawnEnvOverrides> {
+	switch (attempt.mode) {
+		case 'forward':
+			return {};
+		case 'relay': {
+			const relayPath = await deps.agentRelays.ensure(target.containerName, realSock ?? '');
 			deps.output.appendLine(
-				`[crib] crib.forwardSshAgent=false (Workspace); retrying \`crib ${verb}\`.`,
+				`[crib] SSH agent bind-mount failed; retrying \`crib ${verb}\` via host-local relay ${relayPath}.`,
 			);
-			return true;
-		} catch (updateErr) {
-			deps.output.appendLine(
-				`[crib] failed to write crib.forwardSshAgent: ${describe(updateErr)}`,
+			void vscode.window.showInformationMessage(
+				`Crib: routing the SSH agent through a host-local relay so \`crib ${verb}\` can mount it.`,
 			);
+			return { sshAuthSockOverride: relayPath };
 		}
-	} else if (choice === 'Open Settings') {
-		void vscode.commands.executeCommand('workbench.action.openSettings', 'crib.forwardSshAgent');
+		case 'off':
+			deps.output.appendLine(
+				`[crib] SSH agent relay also failed; retrying \`crib ${verb}\` without agent forwarding.`,
+			);
+			vscode.window
+				.showWarningMessage(
+					`Crib: could not mount the SSH agent for \`crib ${verb}\`; bringing the container up without agent forwarding.`,
+					'Open Settings',
+				)
+				.then(
+					choice => {
+						if (choice === 'Open Settings') {
+							void vscode.commands.executeCommand('workbench.action.openSettings', 'crib.forwardSshAgent');
+						}
+					},
+					() => {},
+				);
+			return { forwardSshAgent: false };
 	}
-	// Surface the original error tail to help diagnosis.
-	deps.output.appendLine(`[crib] \`crib ${verb}\` stderr tail:\n${err.stderrTail.trim()}`);
-	return false;
 }
 
 function reportError(err: unknown, deps: CommandDeps): void {
